@@ -58,18 +58,17 @@ available.
 One-command GitHub install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/GhostDVR/main/install_pi.sh | GHOST_DVR_REPO_URL=https://github.com/YOUR_USERNAME/GhostDVR.git bash
+curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | bash
 ```
 
-Replace `YOUR_USERNAME/GhostDVR` with the real GitHub owner and repo name. The
-installer places the app in `$HOME/GhostDVR`, installs Pi dependencies, marks the
-Pi launch files executable, and creates desktop launchers when a Desktop folder
-exists.
+The installer places the app in `$HOME/GhostDVR`, installs Pi dependencies,
+marks the Pi launch files executable, and creates desktop launchers when a
+Desktop folder exists.
 
-After `REPO_URL` is set inside `install_pi.sh`, users can use the shorter form:
+To install from a fork or another branch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/GhostDVR/main/install_pi.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | GHOST_DVR_REPO_URL=https://github.com/OWNER/REPO.git GHOST_DVR_BRANCH=main bash
 ```
 
 Pi launch files:

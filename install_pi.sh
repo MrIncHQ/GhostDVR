@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="Ghost DVR"
 INSTALL_DIR="${GHOST_DVR_INSTALL_DIR:-$HOME/GhostDVR}"
-REPO_URL="${GHOST_DVR_REPO_URL:-https://github.com/YOUR_USERNAME/GhostDVR.git}"
+REPO_URL="${GHOST_DVR_REPO_URL:-https://github.com/MrIncHQ/GhostDVR.git}"
 BRANCH="${GHOST_DVR_BRANCH:-main}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -15,13 +15,6 @@ LAUNCHERS=(
 
 echo "$APP_NAME Raspberry Pi installer"
 echo
-
-if [ "$REPO_URL" = "https://github.com/YOUR_USERNAME/GhostDVR.git" ]; then
-  echo "Installer needs the real GitHub repository URL first."
-  echo "Edit install_pi.sh and set REPO_URL, or run with:"
-  echo "GHOST_DVR_REPO_URL=https://github.com/YOUR_USERNAME/GhostDVR.git bash install_pi.sh"
-  exit 1
-fi
 
 if ! command -v sudo >/dev/null 2>&1; then
   echo "sudo was not found. Install dependencies manually, then rerun this script."
