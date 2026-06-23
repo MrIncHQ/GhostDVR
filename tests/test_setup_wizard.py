@@ -22,15 +22,15 @@ class SetupWizardTests(unittest.TestCase):
         config = build_source_config(
             source_type="RTSP",
             name="Basement Camera",
-            address="rtsp://192.168.1.10/stream",
-            username="admin",
-            password="secret",
+            address="rtsp://192.0.2.10/stream",
+            username="camera-user",
+            password="camera-pass",
             stream_path="/stream",
         )
 
         self.assertEqual(config["source_type"], "rtsp")
-        self.assertEqual(config["username"], "admin")
-        self.assertEqual(config["password"], "secret")
+        self.assertEqual(config["username"], "camera-user")
+        self.assertEqual(config["password"], "camera-pass")
         self.assertEqual(config["stream_path"], "/stream")
 
     def test_build_source_config_rejects_rtps_typo(self):
@@ -38,7 +38,7 @@ class SetupWizardTests(unittest.TestCase):
             build_source_config(
                 source_type="rtps",
                 name="POE",
-                address="rtps://192.168.0.56:554/stream1",
+                address="rtps://example.test:554/stream1",
             )
 
 

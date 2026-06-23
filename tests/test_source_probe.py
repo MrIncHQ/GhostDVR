@@ -38,16 +38,16 @@ class SourceProbeTests(unittest.TestCase):
             args=["ffprobe"],
             returncode=1,
             stdout="",
-            stderr="Error opening rtsp://admin:secret@camera/stream",
+            stderr="Error opening rtsp://camera-user:camera-pass@camera.example/stream",
         )
         with patch("ghost_dvr.source_probe.find_ffmpeg", return_value="C:/bin/ffmpeg.exe"), patch(
             "subprocess.run",
             return_value=completed,
         ):
-            result = probe_stream("rtsp://admin:secret@camera/stream")
+            result = probe_stream("rtsp://camera-user:camera-pass@camera.example/stream")
 
         self.assertFalse(result.ok)
-        self.assertNotIn("secret", result.error or "")
+        self.assertNotIn("camera-pass", result.error or "")
 
 
 if __name__ == "__main__":

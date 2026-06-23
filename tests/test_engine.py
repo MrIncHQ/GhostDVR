@@ -24,12 +24,12 @@ class EngineTests(unittest.TestCase):
             name="Camera",
             source_type="rtsp",
             online=True,
-            stream="rtsp://admin:secret@192.168.0.56:554/stream",
+            stream="rtsp://camera-user:camera-pass@example.test:554/stream",
         )
 
         self.assertEqual(
             status.to_dict()["stream"],
-            "rtsp://<credentials>@192.168.0.56:554/stream",
+            "rtsp://<credentials>@example.test:554/stream",
         )
 
     def test_snapshot_connects_sources_and_writes_status(self):

@@ -12,8 +12,8 @@ class SanitizedOutputTests(unittest.TestCase):
                 {
                     "source_id": "source-1",
                     "source_type": "rtsp",
-                    "username": "admin",
-                    "password": "secret",
+                    "username": "camera-user",
+                    "password": "camera-pass",
                 }
             ]
         }
@@ -21,7 +21,7 @@ class SanitizedOutputTests(unittest.TestCase):
         sanitized = sanitized_config(config)
 
         self.assertEqual(sanitized["sources"][0]["password"], "<redacted>")
-        self.assertEqual(config["sources"][0]["password"], "secret")
+        self.assertEqual(config["sources"][0]["password"], "camera-pass")
 
 
 if __name__ == "__main__":

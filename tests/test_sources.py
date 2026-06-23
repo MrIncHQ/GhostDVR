@@ -48,15 +48,15 @@ class SourceTests(unittest.TestCase):
                 source_id="source-1",
                 name="Basement Camera",
                 source_type="rtsp",
-                address="rtsp://192.168.1.10/stream1",
-                username="admin",
-                password="p@ss word",
+                address="rtsp://192.0.2.10/stream1",
+                username="camera-user",
+                password="camera pass",
             )
         )
 
         self.assertEqual(
             source.get_stream(),
-            "rtsp://admin:p%40ss%20word@192.168.1.10/stream1",
+            "rtsp://camera-user:camera%20pass@192.0.2.10/stream1",
         )
 
     def test_rtsp_source_keeps_credentials_already_in_url(self):
@@ -65,13 +65,13 @@ class SourceTests(unittest.TestCase):
                 source_id="source-1",
                 name="Basement Camera",
                 source_type="rtsp",
-                address="rtsp://admin:secret@192.168.1.10/stream1",
-                username="other",
-                password="other",
+                address="rtsp://camera-user:camera-pass@example.test/stream1",
+                username="other-user",
+                password="other-pass",
             )
         )
 
-        self.assertEqual(source.get_stream(), "rtsp://admin:secret@192.168.1.10/stream1")
+        self.assertEqual(source.get_stream(), "rtsp://camera-user:camera-pass@example.test/stream1")
 
     def test_factory_creates_supported_sources(self):
         sources = create_sources(
@@ -86,7 +86,7 @@ class SourceTests(unittest.TestCase):
                     "source_id": "rtsp-1",
                     "name": "Basement Camera",
                     "source_type": "rtsp",
-                    "address": "rtsp://192.168.1.10/stream1",
+                    "address": "rtsp://192.0.2.10/stream1",
                 },
             ]
         )
