@@ -1,97 +1,93 @@
 # Ghost DVR
 
-Ghost DVR is an offline-first, hardware-agnostic portable DVR platform.
+Ghost DVR is an offline-first portable DVR app for local camera recording.
 
-## Development
+The main target is Raspberry Pi. Windows is used for development and testing.
 
-Windows is the primary development target. Raspberry Pi hardware is a deployment
-and validation target, not a requirement for normal development.
+## Install On Raspberry Pi
 
-Run the Phase 1 bootstrap:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m ghost_dvr.app
-```
-
-Launch the local main screen:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m ghost_dvr.app --ui
-```
-
-On Windows, double-click `Run_Ghost_DVR.bat` to launch the main screen.
-Double-click `Run_Ghost_DVR_Setup.bat` to configure the active video source.
-Double-click `Uninstall_FFmpeg.bat` to remove the winget-installed FFmpeg after
-testing.
-
-Run the local API from a terminal:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m ghost_dvr.app --api
-```
-
-Then open `http://127.0.0.1:8080` for the local web interface.
-
-This creates local runtime files under `runtime/`:
-
-* `config.json`
-* `identity.json`
-* `logs/events.log`
-* `status.json`
-
-Run tests:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests
-```
-
-## Raspberry Pi Notes
-
-Raspberry Pi deployment uses the same Python code and config file. The GPIO LED
-backend is selected automatically on Raspberry Pi hardware when `gpiozero` is
-available.
-
-One-command GitHub install:
+Install Raspberry Pi OS first. After the Pi is booted and connected to the
+internet, open a terminal on the Pi and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | bash
 ```
 
-The installer places the app in `$HOME/GhostDVR`, installs Pi dependencies,
-marks the Pi launch files executable, and creates desktop launchers when a
-Desktop folder exists.
+The installer will:
 
-To install from a fork or another branch:
+* install `git`, `python3`, `python3-gpiozero`, and `ffmpeg`
+* download Ghost DVR to `$HOME/GhostDVR`
+* create the runtime folders
+* make the Pi launch files executable
+* create desktop launchers when the Pi has a Desktop folder
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | GHOST_DVR_REPO_URL=https://github.com/OWNER/REPO.git GHOST_DVR_BRANCH=main bash
-```
+## First Setup
 
-Pi launch files:
-
-* `Run_Ghost_DVR_Pi.sh` starts the main screen.
-* `Run_Ghost_DVR_Setup_Pi.sh` opens the first-time setup prompt.
-* `Run_Ghost_DVR_API_Pi.sh` starts the local web/API server for headless use.
-
-Install the expected Pi packages:
+After install, run setup:
 
 ```bash
-sudo apt update
-sudo apt install -y python3-gpiozero ffmpeg
+~/GhostDVR/Run_Ghost_DVR_Setup_Pi.sh
 ```
 
-If the Pi asks for permission to run the launch files, mark them executable once:
+For an RTSP camera, choose:
+
+```text
+Source Type: rtsp
+Source Name: your camera name
+Source Address: your rtsp:// camera stream URL
+```
+
+The app saves local settings under:
+
+```text
+~/GhostDVR/runtime/
+```
+
+Do not upload or share that folder. It can contain camera credentials,
+recordings, logs, and device identity.
+
+## Start Ghost DVR
+
+For a Pi with a screen:
 
 ```bash
-chmod +x Run_Ghost_DVR_Pi.sh Run_Ghost_DVR_Setup_Pi.sh Run_Ghost_DVR_API_Pi.sh
+~/GhostDVR/Run_Ghost_DVR_Pi.sh
 ```
 
-The default LED pin is GPIO 18. To force or disable real GPIO manually, edit
-`runtime/config.json`:
+For a headless Pi or browser-based control:
+
+```bash
+~/GhostDVR/Run_Ghost_DVR_API_Pi.sh
+```
+
+Then open this from another device on the same network:
+
+```text
+http://PI_IP_ADDRESS:8080
+```
+
+Replace `PI_IP_ADDRESS` with the Pi's actual IP address.
+
+## Updating
+
+Run the installer again:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | bash
+```
+
+If Ghost DVR is already installed at `$HOME/GhostDVR`, the installer updates the
+Git checkout instead of replacing the runtime folder.
+
+## Raspberry Pi GPIO LED
+
+The default status LED pin is GPIO 18.
+
+On Raspberry Pi hardware, Ghost DVR tries to use the real GPIO LED backend
+automatically. If GPIO is unavailable, it falls back to mock GPIO logging instead
+of crashing.
+
+To force or disable the GPIO backend, edit `~/GhostDVR/runtime/config.json`:
 
 ```json
 "hardware": {
@@ -100,4 +96,53 @@ The default LED pin is GPIO 18. To force or disable real GPIO manually, edit
 }
 ```
 
-`gpio_led_backend` accepts `auto`, `gpio`, or `mock`.
+`gpio_led_backend` accepts:
+
+* `auto`
+* `gpio`
+* `mock`
+
+## Windows Development
+
+Windows is the primary development environment. Raspberry Pi hardware is only
+needed for final hardware validation.
+
+Launch the Windows main screen:
+
+```powershell
+.\Run_Ghost_DVR.bat
+```
+
+Run first-time setup:
+
+```powershell
+.\Run_Ghost_DVR_Setup.bat
+```
+
+Run the local API:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m ghost_dvr.app --api
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080
+```
+
+Run tests:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m unittest discover -s tests
+```
+
+## Manual Pi Install From A Fork
+
+To install from another GitHub repo or branch:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | GHOST_DVR_REPO_URL=https://github.com/OWNER/REPO.git GHOST_DVR_BRANCH=main bash
+```
