@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+import unittest
+
+from ghost_dvr.app import sanitized_config
+
+
+class SanitizedOutputTests(unittest.TestCase):
+    def test_sanitized_config_redacts_source_password(self):
+        config = {
+            "sources": [
+                {
+                    "source_id": "source-1",
+                    "source_type": "rtsp",
+                    "username": "admin",
+                    "password": "secret",
+                }
+            ]
+        }
+
+        sanitized = sanitized_config(config)
+
+        self.assertEqual(sanitized["sources"][0]["password"], "<redacted>")
+        self.assertEqual(config["sources"][0]["password"], "secret")
+
+
+if __name__ == "__main__":
+    unittest.main()

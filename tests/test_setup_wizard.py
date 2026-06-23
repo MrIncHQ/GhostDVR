@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+import unittest
+
+from ghost_dvr.setup_wizard import build_source_config
+
+
+class SetupWizardTests(unittest.TestCase):
+    def test_build_source_config_normalizes_defaults(self):
+        config = build_source_config(
+            source_type="",
+            name="",
+            address="",
+        )
+
+        self.assertEqual(config["source_type"], "mock")
+        self.assertEqual(config["name"], "Source 1")
+        self.assertEqual(config["address"], "test_video.mp4")
+        self.assertIsNone(config["username"])
+
+    def test_build_source_config_keeps_rtsp_details(self):
+        config = build_source_config(
+            source_type="RTSP",
+            name="Basement Camera",
+            address="rtsp://192.168.1.10/stream",
+            username="admin",
+            password="secret",
+            stream_path="/stream",
+        )
+
+        self.assertEqual(config["source_type"], "rtsp")
+        self.assertEqual(config["username"], "admin")
+        self.assertEqual(config["password"], "secret")
+        self.assertEqual(config["stream_path"], "/stream")
+
+    def test_build_source_config_rejects_rtps_typo(self):
+        with self.assertRaises(ValueError):
+            build_source_config(
+                source_type="rtps",
+                name="POE",
+                address="rtps://192.168.0.56:554/stream1",
+            )
+
+
+
+if __name__ == "__main__":
+    unittest.main()

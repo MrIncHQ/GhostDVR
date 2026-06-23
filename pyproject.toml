@@ -1,0 +1,10 @@
+[project]
+name = "ghost-dvr"
+version = "0.1.0"
+description = "Offline-first portable DVR platform."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.scripts]
+ghost-dvr = "ghost_dvr.app:main"
