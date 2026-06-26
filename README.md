@@ -2,7 +2,7 @@
 
 Ghost DVR is an offline-first portable DVR app for local camera recording.
 
-The main target is Raspberry Pi. Windows is used for development and testing.
+Supported targets include Raspberry Pi and Windows PC systems.
 
 ## Install On Raspberry Pi
 
@@ -72,6 +72,10 @@ The API binds to `0.0.0.0` by default so other devices on your local network can
 connect to it. If the browser says the connection was refused, make sure
 `Run_Ghost_DVR_API_Pi.sh` is still running on the Pi.
 
+The browser dashboard can view recordings, download recordings, show system
+load, and edit camera settings. Camera edits require the `admin_token` stored in
+`~/GhostDVR/runtime/config.json`.
+
 ## Updating
 
 Run the installer again:
@@ -119,10 +123,11 @@ To force or disable the GPIO backend, edit `~/GhostDVR/runtime/config.json`:
 * `gpio`
 * `mock`
 
-## Windows Development
+## Windows PC
 
-Windows is the primary development environment. Raspberry Pi hardware is only
-needed for final hardware validation.
+Windows can be used as a full local DVR target. A Windows PC can typically
+handle more cameras than a Pi, depending on CPU, disk, and camera stream
+settings.
 
 Launch the Windows main screen:
 
@@ -139,8 +144,7 @@ Run first-time setup:
 Run the local API:
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m ghost_dvr.app --api
+.\Run_Ghost_DVR_API.bat
 ```
 
 Then open:
@@ -148,6 +152,9 @@ Then open:
 ```text
 http://127.0.0.1:8080
 ```
+
+To use the dashboard from another device on your LAN, open the PC's local IP on
+port `8080`.
 
 Run tests:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,11 @@ def default_config(identity: DeviceIdentity) -> dict[str, Any]:
             "preferred_paths": [],
         },
         "web": {
-            "_notes": "Local web/API server settings. host 0.0.0.0 allows access from other devices on the same network. Use 127.0.0.1 for local-only access.",
+            "_notes": "Local web/API server settings. host 0.0.0.0 allows access from other devices on the same network. Use 127.0.0.1 for local-only access. admin_token is required for web config changes.",
             "enabled": False,
             "host": "0.0.0.0",
             "port": 8080,
+            "admin_token": secrets.token_urlsafe(24),
         },
         "time": {
             "_notes": "Use local for the computer timezone, UTC for UTC, or an IANA timezone when available.",

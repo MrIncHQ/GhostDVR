@@ -21,13 +21,15 @@ class HardwareProfile:
         return self.name.startswith("Raspberry Pi")
 
 
-WINDOWS_DEV_PROFILE = HardwareProfile(
-    name="Windows Development",
-    recommended_sources=1,
+WINDOWS_PC_PROFILE = HardwareProfile(
+    name="Windows PC",
+    recommended_sources=8,
     web_ui_enabled=True,
     playback_enabled=True,
     advanced_features_enabled=True,
 )
+
+WINDOWS_DEV_PROFILE = WINDOWS_PC_PROFILE
 
 UNKNOWN_LINUX_PROFILE = HardwareProfile(
     name="Generic Linux SBC",
@@ -73,5 +75,5 @@ def detect_hardware_profile(cpuinfo_path: Path = Path("/proc/cpuinfo")) -> Hardw
             return PI_4_PROFILE
     system = platform.system().lower()
     if system == "windows":
-        return WINDOWS_DEV_PROFILE
+        return WINDOWS_PC_PROFILE
     return UNKNOWN_LINUX_PROFILE

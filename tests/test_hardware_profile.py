@@ -8,6 +8,7 @@ from ghost_dvr.hardware.profile import (
     PI_4_PROFILE,
     PI_5_PROFILE,
     PI_ZERO_2_W_PROFILE,
+    WINDOWS_PC_PROFILE,
     detect_hardware_profile,
 )
 
@@ -30,6 +31,10 @@ class HardwareProfileTests(unittest.TestCase):
             _detect_from_text("Model\t: Raspberry Pi 5 Model B Rev 1.0").name,
             PI_5_PROFILE.name,
         )
+
+    def test_windows_pc_profile_supports_more_sources_than_pi(self):
+        self.assertEqual(WINDOWS_PC_PROFILE.name, "Windows PC")
+        self.assertGreater(WINDOWS_PC_PROFILE.recommended_sources, PI_5_PROFILE.recommended_sources)
 
 
 def _detect_from_text(text: str):

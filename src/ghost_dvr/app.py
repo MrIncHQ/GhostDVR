@@ -94,6 +94,9 @@ def sanitized_config(config: dict[str, object]) -> dict[str, object]:
     for source in sanitized.get("sources", []):
         if isinstance(source, dict) and source.get("password"):
             source["password"] = "<redacted>"
+    web_config = sanitized.get("web", {})
+    if isinstance(web_config, dict) and web_config.get("admin_token"):
+        web_config["admin_token"] = "<redacted>"
     return sanitized
 
 
@@ -162,6 +165,9 @@ def main() -> None:
         server = GhostDvrApiServer(
             engine=context.engine,
             events_log=context.paths.log_file,
+            config=context.config,
+            config_file=context.paths.config_file,
+            recordings_dir=context.engine.recorder.recordings_dir,
             preview_grabber=PreviewFrameGrabber(context.paths.preview_dir),
             host=host,
             port=port,

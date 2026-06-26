@@ -97,6 +97,12 @@ class DvrEngine:
         if callable(close_led):
             close_led()
 
+    def replace_sources(self, source_configs: list[dict[str, Any]]) -> None:
+        if self.recorder.is_recording():
+            raise RuntimeError("Stop recording before changing camera settings")
+        self.config["sources"] = source_configs
+        self.sources = create_sources(source_configs)
+
     def refresh_sources(self) -> list[SourceStatus]:
         statuses: list[SourceStatus] = []
         for source in self.sources:
