@@ -48,6 +48,26 @@ class ApiTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
+    def test_system_endpoint_returns_remote_metrics(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                system = _request("GET", port, "/system")
+
+                self.assertIn("hostname", system)
+                self.assertIn("memory", system)
+                self.assertIn("uptime_seconds", system)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
     def test_recording_endpoints_delegate_to_engine(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             engine = FakeApiEngine()

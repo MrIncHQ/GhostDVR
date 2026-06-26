@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from ghost_dvr.engine import DvrEngine
 from ghost_dvr.preview import PreviewFrameGrabber
+from ghost_dvr.system_metrics import system_metrics
 
 
 class PreviewGrabber(Protocol):
@@ -53,6 +54,9 @@ class GhostDvrApiServer:
                     return
                 if self.path == "/status":
                     self._send_json(engine.snapshot())
+                    return
+                if self.path == "/system":
+                    self._send_json(system_metrics())
                     return
                 if self.path == "/sources":
                     self._send_json(
@@ -265,6 +269,10 @@ def _web_page() -> str:
       <div class="panel"><div class="label">Source</div><div id="source" class="value">-</div></div>
       <div class="panel"><div class="label">Recording</div><div id="recording" class="value">-</div></div>
       <div class="panel"><div class="label">Storage</div><div id="storage" class="value">-</div></div>
+      <div class="panel"><div class="label">CPU Load</div><div id="load" class="value">-</div></div>
+      <div class="panel"><div class="label">Memory</div><div id="memory" class="value">-</div></div>
+      <div class="panel"><div class="label">Temperature</div><div id="temperature" class="value">-</div></div>
+      <div class="panel"><div class="label">Uptime</div><div id="uptime" class="value">-</div></div>
     </section>
     <section class="preview" id="preview"><span id="previewText">Live Preview</span></section>
     <pre id="events"></pre>
@@ -281,6 +289,7 @@ def _web_page() -> str:
 
     async function refresh() {
       const status = await requestJson('/status');
+      const system = await requestJson('/system');
       const events = await requestJson('/events');
       const sources = status.sources || [];
       const sourceText = sources.length
@@ -296,7 +305,34 @@ def _web_page() -> str:
       document.getElementById('storage').textContent = storage.free_gb === undefined
         ? 'Unknown'
         : `${storage.free_gb} GB free of ${storage.total_gb} GB (${storage.free_percent}%)`;
+      document.getElementById('load').textContent = formatLoad(system);
+      document.getElementById('memory').textContent = formatMemory(system.memory);
+      document.getElementById('temperature').textContent = system.temperature_c === null || system.temperature_c === undefined
+        ? 'Unknown'
+        : `${system.temperature_c} C`;
+      document.getElementById('uptime').textContent = formatUptime(system.uptime_seconds);
       document.getElementById('events').textContent = (events.events || []).join('\\n');
+    }
+
+    function formatLoad(system) {
+      if (!system.load) return 'Unknown';
+      const cores = system.cpu_count ? ` / ${system.cpu_count} cores` : '';
+      return `${system.load['1m']} / ${system.load['5m']} / ${system.load['15m']}${cores}`;
+    }
+
+    function formatMemory(memory) {
+      if (!memory) return 'Unknown';
+      return `${memory.used_mb} MB used (${memory.used_percent}%)`;
+    }
+
+    function formatUptime(seconds) {
+      if (seconds === null || seconds === undefined) return 'Unknown';
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+      if (hours > 0) return `${hours}h ${minutes}m`;
+      return `${minutes}m`;
     }
 
     async function refreshPreview() {
