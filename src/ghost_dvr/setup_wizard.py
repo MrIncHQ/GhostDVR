@@ -5,7 +5,7 @@ from typing import Callable
 
 
 InputFn = Callable[[str], str]
-SUPPORTED_SOURCE_TYPES = {"mock", "rtsp"}
+SUPPORTED_SOURCE_TYPES = {"mock", "rtsp", "usb"}
 
 
 def build_source_config(
@@ -21,7 +21,7 @@ def build_source_config(
     normalized_source_type = source_type.strip().lower() or "mock"
     if normalized_source_type not in SUPPORTED_SOURCE_TYPES:
         raise ValueError(
-            f"Unsupported source type: {normalized_source_type}. Use mock or rtsp."
+            f"Unsupported source type: {normalized_source_type}. Use mock, rtsp, or usb."
         )
 
     return {
@@ -39,10 +39,10 @@ def run_setup_prompt(input_fn: InputFn = input) -> dict[str, str | None]:
     print("Ghost DVR First Time Setup")
     print()
     while True:
-        source_type = input_fn("Source Type [mock/rtsp] (mock): ") or "mock"
+        source_type = input_fn("Source Type [mock/rtsp/usb] (mock): ") or "mock"
         if source_type.strip().lower() in SUPPORTED_SOURCE_TYPES:
             break
-        print("Unsupported source type. Use mock or rtsp.")
+        print("Unsupported source type. Use mock, rtsp, or usb.")
     name = input_fn("Source Name (Mock Video): ") or "Mock Video"
     address = input_fn("Source Address or File (test_video.mp4): ") or "test_video.mp4"
     username = input_fn("Username (optional): ")

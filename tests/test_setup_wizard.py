@@ -33,6 +33,16 @@ class SetupWizardTests(unittest.TestCase):
         self.assertEqual(config["password"], "camera-pass")
         self.assertEqual(config["stream_path"], "/stream")
 
+    def test_build_source_config_accepts_usb_source(self):
+        config = build_source_config(
+            source_type="USB",
+            name="Local Webcam",
+            address="/dev/video0",
+        )
+
+        self.assertEqual(config["source_type"], "usb")
+        self.assertEqual(config["address"], "/dev/video0")
+
     def test_build_source_config_rejects_rtps_typo(self):
         with self.assertRaises(ValueError):
             build_source_config(

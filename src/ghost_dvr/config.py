@@ -11,7 +11,7 @@ from ghost_dvr.identity import DeviceIdentity
 
 def default_source() -> dict[str, Any]:
     return {
-        "_notes": "source_type must be mock or rtsp. For mock, address is a local video file path. For rtsp, address must be a full rtsp:// URL.",
+        "_notes": "source_type must be mock, rtsp, or usb. For mock, address is a local video file path. For rtsp, address must be a full rtsp:// URL. For usb, use /dev/video0 on Linux/Pi or video=Camera Name on Windows.",
         "source_id": "source-1",
         "name": "Mock Video",
         "source_type": "mock",

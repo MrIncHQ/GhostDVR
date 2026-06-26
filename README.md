@@ -37,6 +37,22 @@ Source Name: your camera name
 Source Address: your rtsp:// camera stream URL
 ```
 
+For a USB camera on Raspberry Pi or Linux:
+
+```text
+Source Type: usb
+Source Name: USB Camera
+Source Address: /dev/video0
+```
+
+For a USB camera on Windows:
+
+```text
+Source Type: usb
+Source Name: USB Camera
+Source Address: video=Camera Name
+```
+
 The app saves local settings under:
 
 ```text

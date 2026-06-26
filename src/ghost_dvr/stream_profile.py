@@ -6,6 +6,8 @@ from pathlib import Path
 def describe_stream_profile(stream: str, source_type: str) -> str:
     if source_type == "mock":
         return f"Mock File ({Path(stream).name})"
+    if source_type == "usb":
+        return f"USB Camera ({stream})"
     if source_type != "rtsp":
         return source_type
 

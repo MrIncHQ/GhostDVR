@@ -6,6 +6,7 @@ from ghost_dvr.sources.base import SourceConfig
 from ghost_dvr.sources.factory import create_source, create_sources
 from ghost_dvr.sources.mock import MockVideoSource
 from ghost_dvr.sources.rtsp import RtspSource
+from ghost_dvr.sources.usb import UsbCameraSource
 
 
 class SourceTests(unittest.TestCase):
@@ -88,11 +89,46 @@ class SourceTests(unittest.TestCase):
                     "source_type": "rtsp",
                     "address": "rtsp://192.0.2.10/stream1",
                 },
+                {
+                    "source_id": "usb-1",
+                    "name": "USB Camera",
+                    "source_type": "usb",
+                    "address": "/dev/video0",
+                },
             ]
         )
 
         self.assertIsInstance(sources[0], MockVideoSource)
         self.assertIsInstance(sources[1], RtspSource)
+        self.assertIsInstance(sources[2], UsbCameraSource)
+
+    def test_usb_source_requires_address(self):
+        source = UsbCameraSource(
+            SourceConfig(
+                source_id="usb-1",
+                name="USB Camera",
+                source_type="usb",
+                address="",
+            )
+        )
+
+        with self.assertRaises(ValueError):
+            source.connect()
+
+    def test_usb_source_uses_device_address_as_stream(self):
+        source = UsbCameraSource(
+            SourceConfig(
+                source_id="usb-1",
+                name="USB Camera",
+                source_type="usb",
+                address="video=Integrated Camera",
+            )
+        )
+
+        source.connect()
+
+        self.assertTrue(source.is_online())
+        self.assertEqual(source.get_stream(), "video=Integrated Camera")
 
     def test_factory_rejects_unknown_source_type(self):
         config = SourceConfig(

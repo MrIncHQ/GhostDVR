@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ghost_dvr.engine import SourceStatus
 from ghost_dvr.recording import FfmpegRecorder
@@ -62,6 +63,43 @@ class RecordingTests(unittest.TestCase):
             self.assertLess(command.index("-re"), command.index("-i"))
             self.assertLess(command.index("-stream_loop"), command.index("-i"))
             self.assertIn("-1", command)
+
+    def test_ffmpeg_command_uses_v4l2_for_linux_usb_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FfmpegRecorder(Path(temp_dir), segment_minutes=15)
+            source = SourceStatus(
+                source_id="usb-1",
+                name="USB",
+                source_type="usb",
+                online=True,
+                stream="/dev/video0",
+            )
+
+            with patch("platform.system", return_value="Linux"):
+                command = recorder.build_command(source, Path(temp_dir) / "out_%03d.mkv")
+
+            self.assertLess(command.index("-f"), command.index("-i"))
+            self.assertIn("v4l2", command)
+            self.assertIn("libx264", command)
+            self.assertIn("-an", command)
+
+    def test_ffmpeg_command_uses_dshow_for_windows_usb_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FfmpegRecorder(Path(temp_dir), segment_minutes=15)
+            source = SourceStatus(
+                source_id="usb-1",
+                name="USB",
+                source_type="usb",
+                online=True,
+                stream="video=Integrated Camera",
+            )
+
+            with patch("platform.system", return_value="Windows"):
+                command = recorder.build_command(source, Path(temp_dir) / "out_%03d.mkv")
+
+            self.assertLess(command.index("-f"), command.index("-i"))
+            self.assertIn("dshow", command)
+            self.assertIn("video=Integrated Camera", command)
 
     def test_start_rejects_offline_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:

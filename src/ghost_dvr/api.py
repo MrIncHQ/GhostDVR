@@ -334,8 +334,8 @@ def _normalize_single_source(
     password = str(source.get("password") or "")
     existing = _existing_source(existing_sources, source_id)
 
-    if source_type not in {"mock", "rtsp"}:
-        raise ValueError("source_type must be mock or rtsp")
+    if source_type not in {"mock", "rtsp", "usb"}:
+        raise ValueError("source_type must be mock, rtsp, or usb")
     if not address:
         raise ValueError(f"{name} address is required")
     if source_type == "rtsp" and not address.startswith("rtsp://"):
@@ -591,6 +591,29 @@ def _web_page() -> str:
       font-weight: 650;
       text-decoration: none;
     }
+    .camera-table {
+      table-layout: fixed;
+    }
+    .camera-table th:nth-child(1) { width: 15%; }
+    .camera-table th:nth-child(2) { width: 90px; }
+    .camera-table th:nth-child(3) { width: 28%; }
+    .camera-table th:nth-child(4) { width: 16%; }
+    .camera-table th:nth-child(5) { width: 18%; }
+    .camera-table th:nth-child(6) { width: 190px; }
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-start;
+    }
+    .row-actions button {
+      min-width: 82px;
+      min-height: 36px;
+      margin: 0;
+    }
+    .camera-table td {
+      vertical-align: top;
+    }
   </style>
 </head>
 <body>
@@ -603,6 +626,8 @@ def _web_page() -> str:
     </header>
     <nav class="tabs" aria-label="Dashboard tabs">
       <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
+      <button class="tab-button" type="button" data-tab="cameras">Cameras</button>
+      <button class="tab-button" type="button" data-tab="recordings">Recordings</button>
       <button class="tab-button" type="button" data-tab="status">Status</button>
     </nav>
     <section id="dashboardTab" class="tab-panel">
@@ -617,17 +642,19 @@ def _web_page() -> str:
         <div class="panel"><div class="label">Uptime</div><div id="uptime" class="value">-</div></div>
       </section>
       <section class="preview-grid" id="previewGrid"></section>
-      <section>
+    </section>
+    <section id="camerasTab" class="tab-panel" hidden>
         <h2>Cameras</h2>
         <div class="grid">
           <div class="panel"><div class="label">Detected Platform</div><div id="profile" class="value">-</div></div>
           <div class="panel"><div class="label">Recommended Cameras</div><div id="recommendedSources" class="value">-</div></div>
         </div>
+        <p class="message">The admin token unlocks camera changes. Viewing and recording controls do not need it.</p>
         <div class="actions">
-          <input id="adminToken" type="password" autocomplete="current-password" placeholder="Admin token">
+          <input id="adminToken" type="password" autocomplete="current-password" placeholder="Admin token from runtime/config.json">
           <button id="rememberTokenButton" type="button" class="secondary">Remember Token</button>
         </div>
-        <table>
+        <table class="camera-table">
           <thead>
             <tr>
               <th>Name</th>
@@ -647,7 +674,9 @@ def _web_page() -> str:
           <button id="saveSourcesButton" type="button">Save Cameras</button>
         </div>
         <div id="configMessage" class="message"></div>
-      </section>
+    </section>
+    <section id="recordingsTab" class="tab-panel" hidden>
+      <h2>Recordings</h2>
       <table>
         <thead>
           <tr>
@@ -744,21 +773,26 @@ def _web_page() -> str:
         appendInputCell(row, 'username', source.username || '');
         appendInputCell(row, 'password', '', source.has_password ? 'Saved; leave blank to keep' : '');
         const actions = document.createElement('td');
+        const actionGroup = document.createElement('div');
+        actionGroup.className = 'row-actions';
         const test = document.createElement('button');
         test.type = 'button';
         test.className = 'secondary';
         test.textContent = 'Test';
-        test.addEventListener('click', () => testSource(index));
+        test.addEventListener('click', () => testSource(row));
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'danger';
         remove.textContent = 'Remove';
         remove.addEventListener('click', () => {
-          sourceConfigs.splice(index, 1);
+          const currentIndex = Number(row.dataset.index);
+          sourceConfigs.splice(currentIndex, 1);
           renderSourceConfig(sourceConfigs);
+          setConfigMessage('Camera removed from the edit list. Save Cameras to apply.');
         });
-        actions.appendChild(test);
-        actions.appendChild(remove);
+        actionGroup.appendChild(test);
+        actionGroup.appendChild(remove);
+        actions.appendChild(actionGroup);
         row.appendChild(actions);
         tbody.appendChild(row);
       });
@@ -779,7 +813,7 @@ def _web_page() -> str:
       const cell = document.createElement('td');
       const select = document.createElement('select');
       select.dataset.field = field;
-      for (const optionValue of ['rtsp', 'mock']) {
+      for (const optionValue of ['rtsp', 'usb', 'mock']) {
         const option = document.createElement('option');
         option.value = optionValue;
         option.textContent = optionValue;
@@ -791,15 +825,7 @@ def _web_page() -> str:
     }
 
     function collectSources() {
-      return Array.from(document.querySelectorAll('#sourcesConfig tr[data-index]')).map(row => {
-        const index = Number(row.dataset.index);
-        const existing = sourceConfigs[index] || {};
-        const source = { source_id: existing.source_id };
-        row.querySelectorAll('input, select').forEach(input => {
-          source[input.dataset.field] = input.value;
-        });
-        return source;
-      });
+      return Array.from(document.querySelectorAll('#sourcesConfig tr[data-index]')).map(row => sourceFromRow(row));
     }
 
     async function saveSources() {
@@ -848,9 +874,9 @@ def _web_page() -> str:
       }
     }
 
-    async function testSource(index) {
+    async function testSource(row) {
       setConfigMessage('Testing camera...');
-      const source = collectSources()[index];
+      const source = sourceFromRow(row);
       const result = await requestJson('/config/sources/probe', {
         method: 'POST',
         headers: {
@@ -860,6 +886,16 @@ def _web_page() -> str:
         body: JSON.stringify(source)
       });
       setConfigMessage(result.ok ? 'Camera test passed.' : `Camera test failed: ${result.error || 'Unknown error'}`);
+    }
+
+    function sourceFromRow(row) {
+      const index = Number(row.dataset.index);
+      const existing = sourceConfigs[index] || {};
+      const source = { source_id: existing.source_id };
+      row.querySelectorAll('input, select').forEach(input => {
+        source[input.dataset.field] = input.value;
+      });
+      return source;
     }
 
     function setConfigMessage(message) {
@@ -1009,6 +1045,8 @@ def _web_page() -> str:
           item.classList.toggle('active', item === button);
         });
         document.getElementById('dashboardTab').hidden = tab !== 'dashboard';
+        document.getElementById('camerasTab').hidden = tab !== 'cameras';
+        document.getElementById('recordingsTab').hidden = tab !== 'recordings';
         document.getElementById('statusTab').hidden = tab !== 'status';
       });
     });

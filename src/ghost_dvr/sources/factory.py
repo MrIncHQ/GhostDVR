@@ -5,6 +5,7 @@ from typing import Any
 from ghost_dvr.sources.base import Source, SourceConfig
 from ghost_dvr.sources.mock import MockVideoSource
 from ghost_dvr.sources.rtsp import RtspSource
+from ghost_dvr.sources.usb import UsbCameraSource
 
 
 def source_config_from_dict(data: dict[str, Any]) -> SourceConfig:
@@ -25,6 +26,8 @@ def create_source(config: SourceConfig) -> Source:
         return MockVideoSource(config)
     if source_type == "rtsp":
         return RtspSource(config)
+    if source_type == "usb":
+        return UsbCameraSource(config)
     raise ValueError(f"Unsupported source type: {config.source_type}")
 
 

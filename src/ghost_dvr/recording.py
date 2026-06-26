@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import platform
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,15 @@ class FfmpegRecorder:
             input_args = ["-re", "-stream_loop", "-1"]
         elif source.source_type == "rtsp":
             input_args = ["-rtsp_transport", "tcp"]
+        elif source.source_type == "usb":
+            if platform.system().lower() == "windows":
+                input_args = ["-f", "dshow"]
+            else:
+                input_args = ["-f", "v4l2"]
+
+        codec_args = ["-c", "copy"]
+        if source.source_type == "usb":
+            codec_args = ["-c:v", "libx264", "-preset", "ultrafast", "-an"]
 
         output_format = "segment"
         output_suffix = str(output_pattern)
@@ -50,8 +60,7 @@ class FfmpegRecorder:
             *input_args,
             "-i",
             source.stream or "",
-            "-c",
-            "copy",
+            *codec_args,
             "-f",
             output_format,
             "-segment_time",

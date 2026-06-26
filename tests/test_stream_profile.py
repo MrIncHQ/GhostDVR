@@ -24,6 +24,12 @@ class StreamProfileTests(unittest.TestCase):
     def test_describes_unknown_rtsp(self):
         self.assertEqual(describe_stream_profile("rtsp://camera/live", "rtsp"), "RTSP Stream")
 
+    def test_describes_usb_camera(self):
+        self.assertEqual(
+            describe_stream_profile("/dev/video0", "usb"),
+            "USB Camera (/dev/video0)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

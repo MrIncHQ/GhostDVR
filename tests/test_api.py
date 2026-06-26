@@ -139,6 +139,45 @@ class ApiTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
+    def test_config_sources_save_accepts_usb_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _api_config()
+            config_file = Path(temp_dir) / "config.json"
+            engine = FakeApiEngine()
+            server = GhostDvrApiServer(
+                engine=engine,
+                events_log=Path(temp_dir) / "events.log",
+                config=config,
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request(
+                    "POST",
+                    port,
+                    "/config/sources",
+                    headers={"X-Ghost-Admin-Token": "test-token"},
+                    body={
+                        "sources": [
+                            {
+                                "source_id": "usb-1",
+                                "name": "USB Camera",
+                                "source_type": "usb",
+                                "address": "video=Integrated Camera",
+                            }
+                        ]
+                    },
+                )
+
+                self.assertEqual(response["sources"][0]["source_type"], "usb")
+                self.assertEqual(engine.replaced_sources[0]["address"], "video=Integrated Camera")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
     def test_system_endpoint_returns_remote_metrics(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             server = GhostDvrApiServer(
