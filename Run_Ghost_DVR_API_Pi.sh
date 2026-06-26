@@ -15,7 +15,7 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
 fi
 
 echo "Starting Ghost DVR API."
-echo "Open http://PI_IP_ADDRESS:8080 from another device on the same network."
+echo "Leave this terminal open while using the browser interface."
 echo
 
 "$PYTHON_BIN" -m ghost_dvr.app --api

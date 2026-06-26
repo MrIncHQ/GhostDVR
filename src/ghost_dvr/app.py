@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -155,13 +156,20 @@ def main() -> None:
         context.engine.logger.info("System Boot")
         monitor = HealthMonitor(context.engine)
         monitor.start()
-        port = int(context.config.get("web", {}).get("port", 8080))
+        web_config = context.config.get("web", {})
+        host = str(web_config.get("host", "0.0.0.0"))
+        port = int(web_config.get("port", 8080))
         server = GhostDvrApiServer(
             engine=context.engine,
             events_log=context.paths.log_file,
+            host=host,
             port=port,
         )
-        print(f"Ghost DVR API listening at http://127.0.0.1:{port}")
+        print(f"Ghost DVR API listening on {host}:{port}")
+        if host in ("0.0.0.0", "::"):
+            print(f"Open http://{_local_lan_ip()}:{port} from another device on the same network")
+        else:
+            print(f"Open http://{host}:{port}")
         try:
             server.serve_forever()
         finally:
@@ -171,6 +179,15 @@ def main() -> None:
 
     result = bootstrap()
     print(json.dumps(result, indent=2))
+
+
+def _local_lan_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return str(sock.getsockname()[0])
+    except OSError:
+        return "PI_IP_ADDRESS"
 
 
 if __name__ == "__main__":

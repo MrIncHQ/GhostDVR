@@ -11,6 +11,18 @@ from ghost_dvr.api import GhostDvrApiServer
 
 
 class ApiTests(unittest.TestCase):
+    def test_default_host_accepts_lan_connections(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            try:
+                self.assertEqual(server.host, "0.0.0.0")
+            finally:
+                server.httpd.server_close()
+
     def test_status_sources_and_events_endpoints(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             events_log = Path(temp_dir) / "events.log"

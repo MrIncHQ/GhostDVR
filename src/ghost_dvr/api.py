@@ -15,7 +15,7 @@ class GhostDvrApiServer:
         *,
         engine: DvrEngine,
         events_log: Path,
-        host: str = "127.0.0.1",
+        host: str = "0.0.0.0",
         port: int = 8080,
     ) -> None:
         self.engine = engine

@@ -47,8 +47,9 @@ def default_config(identity: DeviceIdentity) -> dict[str, Any]:
             "preferred_paths": [],
         },
         "web": {
-            "_notes": "Local web/API server settings. No internet or cloud service is required.",
+            "_notes": "Local web/API server settings. host 0.0.0.0 allows access from other devices on the same network. Use 127.0.0.1 for local-only access.",
             "enabled": False,
+            "host": "0.0.0.0",
             "port": 8080,
         },
         "time": {

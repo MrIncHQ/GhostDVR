@@ -68,6 +68,10 @@ http://PI_IP_ADDRESS:8080
 
 Replace `PI_IP_ADDRESS` with the Pi's actual IP address.
 
+The API binds to `0.0.0.0` by default so other devices on your local network can
+connect to it. If the browser says the connection was refused, make sure
+`Run_Ghost_DVR_API_Pi.sh` is still running on the Pi.
+
 ## Updating
 
 Run the installer again:
