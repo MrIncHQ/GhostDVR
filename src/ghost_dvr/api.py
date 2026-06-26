@@ -82,6 +82,9 @@ class GhostDvrApiServer:
                 if parsed_path.path == "/config/sources":
                     self._send_json(_source_config_payload(config, engine))
                     return
+                if parsed_path.path == "/config/recording":
+                    self._send_json(_recording_config_payload(config))
+                    return
                 if parsed_path.path == "/events":
                     self._send_json({"events": _read_events(events_log)})
                     return
@@ -106,11 +109,17 @@ class GhostDvrApiServer:
                 if parsed_path.path == "/record/stop":
                     self._handle_engine_action(engine.stop_recording)
                     return
+                if parsed_path.path == "/recordings/delete":
+                    self._handle_recording_delete(engine, config, recordings_dir)
+                    return
                 if parsed_path.path == "/config/sources":
                     self._handle_source_config_save(engine, config, config_file)
                     return
                 if parsed_path.path == "/config/sources/probe":
                     self._handle_source_probe(config)
+                    return
+                if parsed_path.path == "/config/recording":
+                    self._handle_recording_config_save(engine, config, config_file)
                     return
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -157,20 +166,12 @@ class GhostDvrApiServer:
                 body = self.rfile.read(length).decode("utf-8")
                 return json.loads(body)
 
-            def _is_authorized(self, config: dict[str, Any]) -> bool:
-                expected = str(config.get("web", {}).get("admin_token", ""))
-                supplied = self.headers.get("X-Ghost-Admin-Token", "")
-                return bool(expected) and supplied == expected
-
             def _handle_source_config_save(
                 self,
                 engine: DvrEngine,
                 config: dict[str, Any],
                 config_file: Path | None,
             ) -> None:
-                if not self._is_authorized(config):
-                    self._send_json({"error": "Unauthorized"}, HTTPStatus.UNAUTHORIZED)
-                    return
                 if config_file is None:
                     self._send_json(
                         {"error": "Config file is not available"},
@@ -191,9 +192,6 @@ class GhostDvrApiServer:
                     self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
             def _handle_source_probe(self, config: dict[str, Any]) -> None:
-                if not self._is_authorized(config):
-                    self._send_json({"error": "Unauthorized"}, HTTPStatus.UNAUTHORIZED)
-                    return
                 try:
                     payload = self._read_json_body()
                     source_config = _normalize_single_source(
@@ -205,6 +203,58 @@ class GhostDvrApiServer:
                     self._send_json({"ok": error is None, "error": error})
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+            def _handle_recording_delete(
+                self,
+                engine: DvrEngine,
+                config: dict[str, Any],
+                recordings_dir: Path,
+            ) -> None:
+                if engine.recorder.is_recording():
+                    self._send_json(
+                        {"error": "Stop recording before deleting files"},
+                        HTTPStatus.CONFLICT,
+                    )
+                    return
+                try:
+                    payload = self._read_json_body()
+                    requested_file = str(payload.get("file", ""))
+                    path = _safe_recording_path(recordings_dir, requested_file)
+                    if path is None:
+                        self._send_json(
+                            {"error": "Recording not found"},
+                            HTTPStatus.NOT_FOUND,
+                        )
+                        return
+                    deleted = _delete_recording_files(recordings_dir, path)
+                    self._send_json({"deleted": deleted})
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+            def _handle_recording_config_save(
+                self,
+                engine: DvrEngine,
+                config: dict[str, Any],
+                config_file: Path | None,
+            ) -> None:
+                if config_file is None:
+                    self._send_json(
+                        {"error": "Config file is not available"},
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                    )
+                    return
+                try:
+                    payload = self._read_json_body()
+                    recording_config = _normalize_recording_config(
+                        payload,
+                        existing_recording=config.get("recording", {}),
+                    )
+                    config["recording"] = recording_config
+                    engine.config["recording"] = recording_config
+                    save_config(config_file, config)
+                    self._send_json(_recording_config_payload(config))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
             def _send_recording_download(
                 self,
@@ -279,14 +329,72 @@ def _safe_recording_path(recordings_dir: Path, requested_file: str) -> Path | No
     return candidate
 
 
+def _delete_recording_files(recordings_dir: Path, path: Path) -> list[str]:
+    targets = [path]
+    if path.suffix.lower() in {".mkv", ".mp4"}:
+        metadata = _metadata_file_for_recording(path)
+        if metadata.exists():
+            targets.append(metadata)
+
+    deleted: list[str] = []
+    for target in targets:
+        safe_target = _safe_recording_path(recordings_dir, target.name)
+        if safe_target is None:
+            continue
+        safe_target.unlink()
+        deleted.append(safe_target.name)
+    return deleted
+
+
+def _metadata_file_for_recording(video_file: Path) -> Path:
+    stem = video_file.stem
+    if stem.endswith("_000"):
+        stem = stem.removesuffix("_000")
+    return video_file.with_name(f"{stem}.json")
+
+
 def _source_config_payload(config: dict[str, Any], engine: DvrEngine) -> dict[str, Any]:
     return {
         "sources": [_public_source_config(source) for source in config.get("sources", [])],
         "hardware_profile": engine.hardware_profile.to_dict(),
         "recommended_sources": engine.hardware_profile.recommended_sources,
         "recording": bool(engine.recorder.is_recording()),
-        "admin_required": True,
+        "admin_required": False,
     }
+
+
+def _recording_config_payload(config: dict[str, Any]) -> dict[str, Any]:
+    recording = config.get("recording", {})
+    return {
+        "max_duration_minutes": int(recording.get("max_duration_minutes", 0) or 0),
+        "stop_when_free_gb_below": float(
+            recording.get("stop_when_free_gb_below", 2.0) or 0
+        ),
+        "segment_minutes": int(recording.get("segment_minutes", 15) or 15),
+        "duration_options": [15, 25, 30, 40, 60, 0],
+    }
+
+
+def _normalize_recording_config(
+    payload: dict[str, Any],
+    *,
+    existing_recording: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("recording config must be an object")
+
+    recording = dict(existing_recording)
+    duration = int(payload.get("max_duration_minutes", 0) or 0)
+    if duration not in {0, 15, 25, 30, 40, 60}:
+        raise ValueError("max_duration_minutes must be 15, 25, 30, 40, 60, or 0")
+
+    free_gb_floor = float(payload.get("stop_when_free_gb_below", 0) or 0)
+    if free_gb_floor < 0:
+        raise ValueError("stop_when_free_gb_below cannot be negative")
+
+    recording["max_duration_minutes"] = duration
+    recording["stop_when_free_gb_below"] = round(free_gb_floor, 2)
+    return recording
 
 
 def _public_source_config(source: dict[str, Any]) -> dict[str, Any]:
@@ -614,6 +722,13 @@ def _web_page() -> str:
     .camera-table td {
       vertical-align: top;
     }
+    .settings-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      align-items: end;
+      margin: 14px 0;
+    }
   </style>
 </head>
 <body>
@@ -649,11 +764,7 @@ def _web_page() -> str:
           <div class="panel"><div class="label">Detected Platform</div><div id="profile" class="value">-</div></div>
           <div class="panel"><div class="label">Recommended Cameras</div><div id="recommendedSources" class="value">-</div></div>
         </div>
-        <p class="message">The admin token unlocks camera changes. Viewing and recording controls do not need it.</p>
-        <div class="actions">
-          <input id="adminToken" type="password" autocomplete="current-password" placeholder="Admin token from runtime/config.json">
-          <button id="rememberTokenButton" type="button" class="secondary">Remember Token</button>
-        </div>
+        <p class="message">Camera changes apply to this local Ghost DVR dashboard.</p>
         <table class="camera-table">
           <thead>
             <tr>
@@ -677,6 +788,31 @@ def _web_page() -> str:
     </section>
     <section id="recordingsTab" class="tab-panel" hidden>
       <h2>Recordings</h2>
+      <section class="panel">
+        <h3>Recording Limits</h3>
+        <div class="settings-row">
+          <label>
+            <span class="label">Session Duration</span>
+            <select id="recordingDuration">
+              <option value="15">15 minutes</option>
+              <option value="25">25 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="40">40 minutes</option>
+              <option value="60">1 hour</option>
+              <option value="0">Infinite</option>
+            </select>
+          </label>
+          <label>
+            <span class="label">Stop When Free Space Hits</span>
+            <input id="freeGbFloor" type="number" min="0" step="0.5" placeholder="2">
+          </label>
+          <button id="saveRecordingConfigButton" type="button">Save Limits</button>
+        </div>
+        <p class="message">Infinite keeps recording until stopped or until free disk space reaches the GB floor.</p>
+        <div id="recordingConfigMessage" class="message"></div>
+      </section>
+      <p class="message">Download or delete completed recordings from the Pi remotely.</p>
+      <div id="recordingsMessage" class="message"></div>
       <table>
         <thead>
           <tr>
@@ -686,10 +822,11 @@ def _web_page() -> str:
             <th>Size</th>
             <th>Status</th>
             <th>Download</th>
+            <th>Delete</th>
           </tr>
         </thead>
         <tbody id="recordings">
-          <tr><td colspan="6">No recordings loaded</td></tr>
+          <tr><td colspan="7">No recordings loaded</td></tr>
         </tbody>
       </table>
     </section>
@@ -702,6 +839,7 @@ def _web_page() -> str:
     let isRecording = false;
     let sourceConfigs = [];
     let sourceConfigLoaded = false;
+    let recordingConfigLoaded = false;
 
     async function requestJson(path, options) {
       const response = await fetch(path, options);
@@ -710,14 +848,11 @@ def _web_page() -> str:
       return data;
     }
 
-    function adminToken() {
-      return document.getElementById('adminToken').value || localStorage.getItem('ghostAdminToken') || '';
-    }
-
     async function refresh() {
       const status = await requestJson('/status');
       const system = await requestJson('/system');
       const sourceConfig = await requestJson('/config/sources');
+      const recordingConfig = await requestJson('/config/recording');
       const recordings = await requestJson('/recordings');
       const events = await requestJson('/events');
       const sources = status.sources || [];
@@ -748,6 +883,10 @@ def _web_page() -> str:
         renderPreviewSlots(sourceConfigs);
         sourceConfigLoaded = true;
       }
+      if (!recordingConfigLoaded) {
+        renderRecordingConfig(recordingConfig);
+        recordingConfigLoaded = true;
+      }
       renderRecordings(recordings.recordings || []);
       document.getElementById('events').textContent = (events.events || []).join('\\n');
     }
@@ -758,7 +897,7 @@ def _web_page() -> str:
       if (!sources.length) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
-        cell.colSpan = 6;
+        cell.colSpan = 7;
         cell.textContent = 'No cameras configured';
         row.appendChild(cell);
         tbody.appendChild(row);
@@ -833,8 +972,7 @@ def _web_page() -> str:
       const response = await requestJson('/config/sources', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'X-Ghost-Admin-Token': adminToken()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ sources: collectSources() })
       });
@@ -880,8 +1018,7 @@ def _web_page() -> str:
       const result = await requestJson('/config/sources/probe', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'X-Ghost-Admin-Token': adminToken()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(source)
       });
@@ -908,7 +1045,7 @@ def _web_page() -> str:
       if (!recordings.length) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
-        cell.colSpan = 6;
+        cell.colSpan = 7;
         cell.textContent = 'No recordings yet';
         row.appendChild(cell);
         tbody.appendChild(row);
@@ -929,8 +1066,66 @@ def _web_page() -> str:
         link.textContent = 'Download';
         downloadCell.appendChild(link);
         row.appendChild(downloadCell);
+        const deleteCell = document.createElement('td');
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'danger';
+        deleteButton.textContent = 'Delete';
+        deleteButton.addEventListener('click', () => deleteRecording(recording.video_file));
+        deleteCell.appendChild(deleteButton);
+        row.appendChild(deleteCell);
         tbody.appendChild(row);
       }
+    }
+
+    async function deleteRecording(file) {
+      if (!file) return;
+      if (!confirm(`Delete ${file}?`)) return;
+      setRecordingsMessage('Deleting recording...');
+      try {
+        const result = await requestJson('/recordings/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ file })
+        });
+        setRecordingsMessage(`Deleted: ${(result.deleted || []).join(', ')}`);
+        const recordings = await requestJson('/recordings');
+        renderRecordings(recordings.recordings || []);
+      } catch (error) {
+        setRecordingsMessage(`Delete failed: ${error.message}`);
+      }
+    }
+
+    function setRecordingsMessage(message) {
+      document.getElementById('recordingsMessage').textContent = message;
+    }
+
+    function renderRecordingConfig(config) {
+      document.getElementById('recordingDuration').value = String(config.max_duration_minutes ?? 0);
+      document.getElementById('freeGbFloor').value = String(config.stop_when_free_gb_below ?? 2);
+    }
+
+    async function saveRecordingConfig() {
+      setRecordingConfigMessage('Saving recording limits...');
+      const response = await requestJson('/config/recording', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          max_duration_minutes: Number(document.getElementById('recordingDuration').value),
+          stop_when_free_gb_below: Number(document.getElementById('freeGbFloor').value)
+        })
+      });
+      renderRecordingConfig(response);
+      recordingConfigLoaded = true;
+      setRecordingConfigMessage('Recording limits saved.');
+    }
+
+    function setRecordingConfigMessage(message) {
+      document.getElementById('recordingConfigMessage').textContent = message;
     }
 
     function appendCell(row, value) {
@@ -1013,11 +1208,6 @@ def _web_page() -> str:
       }
     });
 
-    document.getElementById('rememberTokenButton').addEventListener('click', () => {
-      localStorage.setItem('ghostAdminToken', document.getElementById('adminToken').value);
-      setConfigMessage('Admin token saved in this browser.');
-    });
-
     document.getElementById('addSourceButton').addEventListener('click', () => {
       sourceConfigs.push({
         source_id: '',
@@ -1035,6 +1225,14 @@ def _web_page() -> str:
         await saveSources();
       } catch (error) {
         setConfigMessage(`Save failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('saveRecordingConfigButton').addEventListener('click', async () => {
+      try {
+        await saveRecordingConfig();
+      } catch (error) {
+        setRecordingConfigMessage(`Save failed: ${error.message}`);
       }
     });
 

@@ -70,32 +70,6 @@ class ApiTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
-    def test_config_sources_save_requires_admin_token(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_file = Path(temp_dir) / "config.json"
-            server = GhostDvrApiServer(
-                engine=FakeApiEngine(),
-                events_log=Path(temp_dir) / "events.log",
-                config=_api_config(),
-                config_file=config_file,
-                port=0,
-            )
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            port = server.httpd.server_address[1]
-            try:
-                response = _request(
-                    "POST",
-                    port,
-                    "/config/sources",
-                    body={"sources": []},
-                )
-
-                self.assertEqual(response["error"], "Unauthorized")
-            finally:
-                server.shutdown()
-                thread.join(timeout=5)
-
     def test_config_sources_save_updates_config_and_preserves_blank_password(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config = _api_config()
@@ -116,7 +90,6 @@ class ApiTests(unittest.TestCase):
                     "POST",
                     port,
                     "/config/sources",
-                    headers={"X-Ghost-Admin-Token": "test-token"},
                     body={
                         "sources": [
                             {
@@ -159,7 +132,6 @@ class ApiTests(unittest.TestCase):
                     "POST",
                     port,
                     "/config/sources",
-                    headers={"X-Ghost-Admin-Token": "test-token"},
                     body={
                         "sources": [
                             {
@@ -174,6 +146,77 @@ class ApiTests(unittest.TestCase):
 
                 self.assertEqual(response["sources"][0]["source_type"], "usb")
                 self.assertEqual(engine.replaced_sources[0]["address"], "video=Integrated Camera")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_recording_config_endpoints_read_and_save_limits(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _api_config()
+            config["recording"] = {
+                "segment_minutes": 15,
+                "max_duration_minutes": 0,
+                "stop_when_free_gb_below": 2.0,
+            }
+            config_file = Path(temp_dir) / "config.json"
+            engine = FakeApiEngine()
+            server = GhostDvrApiServer(
+                engine=engine,
+                events_log=Path(temp_dir) / "events.log",
+                config=config,
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                current = _request("GET", port, "/config/recording")
+                self.assertEqual(current["max_duration_minutes"], 0)
+
+                saved = _request(
+                    "POST",
+                    port,
+                    "/config/recording",
+                    body={
+                        "max_duration_minutes": 30,
+                        "stop_when_free_gb_below": 5.5,
+                    },
+                )
+
+                self.assertEqual(saved["max_duration_minutes"], 30)
+                self.assertEqual(saved["stop_when_free_gb_below"], 5.5)
+                self.assertEqual(engine.config["recording"]["max_duration_minutes"], 30)
+                self.assertTrue(config_file.exists())
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_recording_config_rejects_unknown_duration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_file = Path(temp_dir) / "config.json"
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config=_api_config(),
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request(
+                    "POST",
+                    port,
+                    "/config/recording",
+                    body={
+                        "max_duration_minutes": 20,
+                        "stop_when_free_gb_below": 2.0,
+                    },
+                )
+
+                self.assertIn("max_duration_minutes", response["error"])
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -367,6 +410,68 @@ class ApiTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
+    def test_recordings_delete_removes_video_and_matching_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recordings_dir = Path(temp_dir) / "recordings"
+            recordings_dir.mkdir()
+            video = recordings_dir / "clip_000.mkv"
+            metadata = recordings_dir / "clip.json"
+            video.write_bytes(b"video")
+            metadata.write_text("{}", encoding="utf-8")
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config=_api_config(),
+                recordings_dir=recordings_dir,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request(
+                    "POST",
+                    port,
+                    "/recordings/delete",
+                    body={"file": "clip_000.mkv"},
+                )
+
+                self.assertEqual(response["deleted"], ["clip_000.mkv", "clip.json"])
+                self.assertFalse(video.exists())
+                self.assertFalse(metadata.exists())
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_recordings_delete_is_blocked_while_recording(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recordings_dir = Path(temp_dir) / "recordings"
+            recordings_dir.mkdir()
+            (recordings_dir / "clip_000.mkv").write_bytes(b"video")
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(recording=True),
+                events_log=Path(temp_dir) / "events.log",
+                config=_api_config(),
+                recordings_dir=recordings_dir,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request(
+                    "POST",
+                    port,
+                    "/recordings/delete",
+                    body={"file": "clip_000.mkv"},
+                )
+
+                self.assertEqual(response["error"], "Stop recording before deleting files")
+                self.assertTrue((recordings_dir / "clip_000.mkv").exists())
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
 
 class FakeApiSource:
     source_type = "rtsp"
@@ -388,13 +493,18 @@ class FakeApiSource:
 
 
 class FakeApiEngine:
-    def __init__(self, source_online: bool = True, source_count: int = 1) -> None:
+    def __init__(
+        self,
+        source_online: bool = True,
+        source_count: int = 1,
+        recording: bool = False,
+    ) -> None:
         self.started = False
         self.stopped = False
         self.source_online = source_online
         self.source_count = source_count
         self.config = {"sources": []}
-        self.recorder = FakeApiRecorder()
+        self.recorder = FakeApiRecorder(recording=recording)
         self.hardware_profile = FakeHardwareProfile()
         self.recording_source_validator = FakeSourceValidator()
         self.replaced_sources = []
@@ -429,8 +539,11 @@ class FakeApiEngine:
 
 
 class FakeApiRecorder:
+    def __init__(self, recording: bool = False) -> None:
+        self.recording = recording
+
     def is_recording(self):
-        return False
+        return self.recording
 
 
 class FakeHardwareProfile:

@@ -134,6 +134,7 @@ class DvrEngine:
     def snapshot(self) -> dict[str, Any]:
         source_statuses = [status.to_dict() for status in self.refresh_sources()]
         storage_status = self.storage_monitor.snapshot()
+        self._apply_recording_limits(storage_status)
         if storage_status.warning:
             self.logger.warning(
                 "Storage Warning: %.2f%% remaining",
@@ -176,13 +177,7 @@ class DvrEngine:
 
     def stop_recording(self) -> dict[str, Any]:
         self.recording_requested = False
-        was_recording = self.recorder.is_recording()
-        if was_recording:
-            self._finish_active_metadata()
-        self.recorder.stop()
-        if was_recording:
-            self.active_source_id = None
-            self.logger.info("Recording Stopped")
+        self._stop_active_recording("Recording Stopped")
         return self.snapshot()
 
     def health_check(self) -> dict[str, Any]:
@@ -234,6 +229,36 @@ class DvrEngine:
                 started_at=session.started_at,
             )
             self.active_metadata_path = None
+
+    def _stop_active_recording(self, log_message: str) -> None:
+        was_recording = self.recorder.is_recording()
+        if was_recording:
+            self._finish_active_metadata()
+        self.recorder.stop()
+        if was_recording:
+            self.active_source_id = None
+            self.logger.info(log_message)
+
+    def _apply_recording_limits(self, storage_status) -> None:
+        if not self.recorder.is_recording():
+            return
+
+        recording_config = self.config.get("recording", {})
+        max_duration_minutes = int(recording_config.get("max_duration_minutes", 0) or 0)
+        if (
+            max_duration_minutes > 0
+            and self.recording_duration_seconds() >= max_duration_minutes * 60
+        ):
+            self.recording_requested = False
+            self._stop_active_recording("Recording Auto Stop: duration limit reached")
+            return
+
+        free_gb_floor = float(recording_config.get("stop_when_free_gb_below", 0) or 0)
+        if free_gb_floor > 0 and storage_status.free_gb <= free_gb_floor:
+            self.recording_requested = False
+            self._stop_active_recording(
+                f"Recording Auto Stop: free storage is at or below {free_gb_floor:.2f} GB"
+            )
 
     def recording_duration_seconds(self) -> int:
         session = self.recorder.session

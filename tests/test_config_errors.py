@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +24,42 @@ class ConfigErrorTests(unittest.TestCase):
                         hostname="ghostdvr-test",
                     ),
                 )
+
+    def test_load_removes_obsolete_web_admin_token(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "web": {
+                            "host": "0.0.0.0",
+                            "port": 8080,
+                            "admin_token": "old-token",
+                        },
+                        "sources": [
+                            {
+                                "source_id": "source-1",
+                                "name": "Mock Video",
+                                "source_type": "mock",
+                                "address": "test_video.mp4",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_or_create_config(
+                path,
+                DeviceIdentity(
+                    uuid="00000000-0000-0000-0000-000000000000",
+                    device_id="TEST",
+                    hostname="ghostdvr-test",
+                ),
+            )
+
+            self.assertNotIn("admin_token", config["web"])
+            self.assertNotIn("admin_token", json.loads(path.read_text())["web"])
 
 
 if __name__ == "__main__":

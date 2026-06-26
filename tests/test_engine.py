@@ -233,6 +233,97 @@ class EngineTests(unittest.TestCase):
 
             self.assertEqual(status["recording_duration_seconds"], 65)
 
+    def test_snapshot_auto_stops_when_duration_limit_is_reached(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FakeRecorder(Path(temp_dir))
+            clock = FakeClock()
+            engine = DvrEngine(
+                identity=DeviceIdentity(
+                    uuid="00000000-0000-0000-0000-000000000000",
+                    device_id="TEST",
+                    hostname="ghostdvr-test",
+                ),
+                config={
+                    "sources": [],
+                    "recording": {
+                        "segment_minutes": 15,
+                        "max_duration_minutes": 15,
+                        "stop_when_free_gb_below": 2.0,
+                    },
+                },
+                status_file=Path(temp_dir) / "status.json",
+                logger=logging.getLogger("test.engine.duration-limit"),
+                sources=[
+                    MockVideoSource(
+                        SourceConfig(
+                            source_id="source-1",
+                            name="Mock Video",
+                            source_type="mock",
+                            address="test_video.mp4",
+                        )
+                    )
+                ],
+                recorder=recorder,
+                storage_monitor=FakeStorageMonitor(),
+                status_led=FakeStatusLed(),
+                clock=clock,
+                recording_source_validator=FakeSourceValidator(),
+            )
+
+            engine.start_recording()
+            recorder.session = RecordingSession(
+                source_id="source-1",
+                output_pattern=Path(temp_dir) / "duration_limit_%03d.mkv",
+                started_at=clock.current,
+            )
+            clock.current = clock.current + timedelta(minutes=15)
+            status = engine.snapshot()
+
+            self.assertFalse(status["recording"])
+            self.assertFalse(engine.recording_requested)
+            self.assertEqual(recorder.stop_count, 1)
+
+    def test_snapshot_auto_stops_when_free_space_floor_is_reached(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FakeRecorder(Path(temp_dir))
+            engine = DvrEngine(
+                identity=DeviceIdentity(
+                    uuid="00000000-0000-0000-0000-000000000000",
+                    device_id="TEST",
+                    hostname="ghostdvr-test",
+                ),
+                config={
+                    "sources": [],
+                    "recording": {
+                        "segment_minutes": 15,
+                        "max_duration_minutes": 0,
+                        "stop_when_free_gb_below": 5.0,
+                    },
+                },
+                status_file=Path(temp_dir) / "status.json",
+                logger=logging.getLogger("test.engine.storage-floor"),
+                sources=[
+                    MockVideoSource(
+                        SourceConfig(
+                            source_id="source-1",
+                            name="Mock Video",
+                            source_type="mock",
+                            address="test_video.mp4",
+                        )
+                    )
+                ],
+                recorder=recorder,
+                storage_monitor=FakeStorageMonitor(free_gb=5.0),
+                status_led=FakeStatusLed(),
+                recording_source_validator=FakeSourceValidator(),
+            )
+
+            status = engine.start_recording()
+
+            self.assertFalse(status["recording"])
+            self.assertFalse(engine.recording_requested)
+            self.assertEqual(recorder.stop_count, 1)
+
     def test_health_check_recovers_failed_recording_when_requested(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             recorder = FakeRecorder(Path(temp_dir))
@@ -340,6 +431,7 @@ class FakeRecorder:
         self.started_source_id: str | None = None
         self.session: RecordingSession | None = None
         self.start_count = 0
+        self.stop_count = 0
 
     def is_recording(self) -> bool:
         return self.recording
@@ -356,18 +448,22 @@ class FakeRecorder:
         return self.session
 
     def stop(self) -> None:
+        self.stop_count += 1
         self.recording = False
 
 
 class FakeStorageMonitor:
+    def __init__(self, free_gb: float = 50.0) -> None:
+        self.free_gb = free_gb
+
     def snapshot(self) -> StorageStatus:
         return StorageStatus(
             path="recordings",
             total_gb=100.0,
-            used_gb=50.0,
-            free_gb=50.0,
-            free_percent=50.0,
-            warning=False,
+            used_gb=100.0 - self.free_gb,
+            free_gb=self.free_gb,
+            free_percent=self.free_gb,
+            warning=self.free_gb <= 10.0,
         )
 
 

@@ -89,8 +89,16 @@ connect to it. If the browser says the connection was refused, make sure
 `Run_Ghost_DVR_API_Pi.sh` is still running on the Pi.
 
 The browser dashboard can view recordings, download recordings, show system
-load, and edit camera settings. Camera edits require the `admin_token` stored in
-`~/GhostDVR/runtime/config.json`.
+load, edit camera settings, and delete completed recordings. The dashboard is
+intended for a trusted local network only. Do not port-forward it or expose it
+directly to the internet.
+
+The Recordings tab lets you choose how long a recording session runs: 15, 25,
+30, 40, 60 minutes, or infinite. Infinite keeps recording until you stop it or
+until the free disk space reaches the configured GB floor. Recordings are still
+split into segment files while the session continues. The default segment length
+is 15 minutes and can be changed with `recording.segment_minutes` in
+`runtime/config.json`.
 
 ## Updating
 
