@@ -162,6 +162,7 @@ def main() -> None:
         server = GhostDvrApiServer(
             engine=context.engine,
             events_log=context.paths.log_file,
+            preview_grabber=PreviewFrameGrabber(context.paths.preview_dir),
             host=host,
             port=port,
         )

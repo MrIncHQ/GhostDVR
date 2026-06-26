@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from ghost_dvr.ffmpeg import find_ffmpeg
+from ghost_dvr.ffmpeg import find_ffmpeg, find_ffprobe
 from ghost_dvr.secrets import redact_url_credentials
 
 
@@ -28,7 +28,10 @@ def probe_stream(stream: str, timeout_seconds: int = 15) -> StreamProbeResult:
     if ffmpeg is None:
         return StreamProbeResult(ok=False, error="FFmpeg not found")
 
-    ffprobe = str(Path(ffmpeg).with_name("ffprobe.exe"))
+    ffprobe = find_ffprobe(ffmpeg)
+    if ffprobe is None:
+        return StreamProbeResult(ok=False, error="FFprobe not found")
+
     command = [
         ffprobe,
         "-v",

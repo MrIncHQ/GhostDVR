@@ -15,6 +15,16 @@ class SourceProbeTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.error, "FFmpeg not found")
 
+    def test_probe_reports_missing_ffprobe(self):
+        with patch("ghost_dvr.source_probe.find_ffmpeg", return_value="/usr/bin/ffmpeg"), patch(
+            "ghost_dvr.source_probe.find_ffprobe",
+            return_value=None,
+        ):
+            result = probe_stream("rtsp://camera/stream")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "FFprobe not found")
+
     def test_probe_reports_video_stream(self):
         completed = subprocess.CompletedProcess(
             args=["ffprobe"],
@@ -23,6 +33,9 @@ class SourceProbeTests(unittest.TestCase):
             stderr="",
         )
         with patch("ghost_dvr.source_probe.find_ffmpeg", return_value="C:/bin/ffmpeg.exe"), patch(
+            "ghost_dvr.source_probe.find_ffprobe",
+            return_value="C:/bin/ffprobe.exe",
+        ), patch(
             "subprocess.run",
             return_value=completed,
         ):
@@ -41,6 +54,9 @@ class SourceProbeTests(unittest.TestCase):
             stderr="Error opening rtsp://camera-user:camera-pass@camera.example/stream",
         )
         with patch("ghost_dvr.source_probe.find_ffmpeg", return_value="C:/bin/ffmpeg.exe"), patch(
+            "ghost_dvr.source_probe.find_ffprobe",
+            return_value="C:/bin/ffprobe.exe",
+        ), patch(
             "subprocess.run",
             return_value=completed,
         ):

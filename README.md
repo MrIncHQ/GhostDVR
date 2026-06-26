@@ -83,6 +83,19 @@ curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh
 If Ghost DVR is already installed at `$HOME/GhostDVR`, the installer updates the
 Git checkout instead of replacing the runtime folder.
 
+If an update stops with a message like `local changes would be overwritten by
+merge`, restore the launcher file and pull again:
+
+```bash
+cd ~/GhostDVR
+git restore -- Run_Ghost_DVR_API_Pi.sh
+git pull
+chmod +x Run_Ghost_DVR_API_Pi.sh Run_Ghost_DVR_Pi.sh Run_Ghost_DVR_Setup_Pi.sh
+```
+
+The camera settings under `~/GhostDVR/runtime/` are ignored by Git and are not
+removed by this.
+
 ## Raspberry Pi GPIO LED
 
 The default status LED pin is GPIO 18.

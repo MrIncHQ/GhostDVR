@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ghost_dvr.ffmpeg import find_ffmpeg
+from ghost_dvr.ffmpeg import find_ffmpeg, find_ffprobe
 
 
 class FfmpegResolverTests(unittest.TestCase):
@@ -37,6 +37,38 @@ class FfmpegResolverTests(unittest.TestCase):
                 {"LOCALAPPDATA": temp_dir},
             ):
                 self.assertEqual(find_ffmpeg(), str(ffmpeg))
+
+    def test_find_ffprobe_prefers_path(self):
+        with patch("shutil.which", return_value="/usr/bin/ffprobe"):
+            self.assertEqual(find_ffprobe("/usr/bin/ffmpeg"), "/usr/bin/ffprobe")
+
+    def test_find_ffprobe_uses_linux_sibling(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ffmpeg = Path(temp_dir) / "ffmpeg"
+            ffprobe = Path(temp_dir) / "ffprobe"
+            ffmpeg.write_text("", encoding="utf-8")
+            ffprobe.write_text("", encoding="utf-8")
+
+            with patch("shutil.which", return_value=None), patch.dict(
+                "os.environ",
+                {},
+                clear=True,
+            ):
+                self.assertEqual(find_ffprobe(str(ffmpeg)), str(ffprobe))
+
+    def test_find_ffprobe_uses_windows_sibling(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ffmpeg = Path(temp_dir) / "ffmpeg.exe"
+            ffprobe = Path(temp_dir) / "ffprobe.exe"
+            ffmpeg.write_text("", encoding="utf-8")
+            ffprobe.write_text("", encoding="utf-8")
+
+            with patch("shutil.which", return_value=None), patch.dict(
+                "os.environ",
+                {},
+                clear=True,
+            ):
+                self.assertEqual(find_ffprobe(str(ffmpeg)), str(ffprobe))
 
 
 if __name__ == "__main__":
