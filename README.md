@@ -194,3 +194,7 @@ To install from another GitHub repo or branch:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | GHOST_DVR_REPO_URL=https://github.com/OWNER/REPO.git GHOST_DVR_BRANCH=main bash
 ```
+
+## License
+
+Ghost DVR is released under the MIT License.
