@@ -70,6 +70,9 @@ For a Pi with a screen:
 ~/GhostDVR/Run_Ghost_DVR_Pi.sh
 ```
 
+The local window is intentionally lightweight. It can start and stop recording,
+show preview/status, and change only the recording time and save folder.
+
 For a headless Pi or browser-based control:
 
 ```bash
@@ -99,6 +102,10 @@ until the free disk space reaches the configured GB floor. Recordings are still
 split into segment files while the session continues. The default segment length
 is 15 minutes and can be changed with `recording.segment_minutes` in
 `runtime/config.json`.
+
+The Recordings tab also shows the active recording folder and lets you set a
+preferred save folder. Leave it blank to use the default `runtime/recordings`
+folder. Stop recording before changing the save folder.
 
 ## Updating
 

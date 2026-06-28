@@ -147,6 +147,8 @@ def main() -> None:
         try:
             MainWindow(
                 context.engine,
+                config_file=context.paths.config_file,
+                default_recordings_dir=context.paths.recordings_dir,
                 preview_grabber=PreviewFrameGrabber(context.paths.preview_dir),
             ).run()
         finally:

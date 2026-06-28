@@ -221,6 +221,77 @@ class ApiTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
+    def test_storage_config_save_switches_active_recordings_dir(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = _api_config()
+            config_file = root / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            default_recordings_dir = root / "runtime" / "recordings"
+            preferred_recordings_dir = root / "external" / "recordings"
+            video = preferred_recordings_dir / "external_000.mkv"
+            preferred_recordings_dir.mkdir(parents=True)
+            video.write_bytes(b"video")
+            engine = FakeApiEngine(recordings_dir=default_recordings_dir)
+            server = GhostDvrApiServer(
+                engine=engine,
+                events_log=root / "runtime" / "logs" / "events.log",
+                config=config,
+                config_file=config_file,
+                recordings_dir=default_recordings_dir,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                saved = _request(
+                    "POST",
+                    port,
+                    "/config/storage",
+                    body={"preferred_path": str(preferred_recordings_dir)},
+                )
+                recordings = _request("GET", port, "/recordings")
+
+                self.assertEqual(saved["preferred_path"], str(preferred_recordings_dir))
+                self.assertEqual(saved["active_recordings_dir"], str(preferred_recordings_dir))
+                self.assertEqual(engine.recorder.recordings_dir, preferred_recordings_dir)
+                self.assertEqual(engine.storage_monitor.path, preferred_recordings_dir)
+                self.assertEqual(recordings["recordings"][0]["video_file"], video.name)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_storage_config_save_is_blocked_while_recording(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_file = root / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            default_recordings_dir = root / "runtime" / "recordings"
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(recording=True, recordings_dir=default_recordings_dir),
+                events_log=root / "runtime" / "logs" / "events.log",
+                config=_api_config(),
+                config_file=config_file,
+                recordings_dir=default_recordings_dir,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request(
+                    "POST",
+                    port,
+                    "/config/storage",
+                    body={"preferred_path": str(root / "external")},
+                )
+
+                self.assertEqual(response["error"], "Stop recording before changing storage settings")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
     def test_system_endpoint_returns_remote_metrics(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             server = GhostDvrApiServer(
@@ -498,13 +569,15 @@ class FakeApiEngine:
         source_online: bool = True,
         source_count: int = 1,
         recording: bool = False,
+        recordings_dir: Path | None = None,
     ) -> None:
         self.started = False
         self.stopped = False
         self.source_online = source_online
         self.source_count = source_count
         self.config = {"sources": []}
-        self.recorder = FakeApiRecorder(recording=recording)
+        self.recorder = FakeApiRecorder(recording=recording, recordings_dir=recordings_dir)
+        self.storage_monitor = FakeApiStorageMonitor(recordings_dir or Path("recordings"))
         self.hardware_profile = FakeHardwareProfile()
         self.recording_source_validator = FakeSourceValidator()
         self.replaced_sources = []
@@ -539,11 +612,21 @@ class FakeApiEngine:
 
 
 class FakeApiRecorder:
-    def __init__(self, recording: bool = False) -> None:
+    def __init__(
+        self,
+        recording: bool = False,
+        recordings_dir: Path | None = None,
+    ) -> None:
         self.recording = recording
+        self.recordings_dir = recordings_dir or Path("recordings")
 
     def is_recording(self):
         return self.recording
+
+
+class FakeApiStorageMonitor:
+    def __init__(self, path: Path) -> None:
+        self.path = path
 
 
 class FakeHardwareProfile:

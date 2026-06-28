@@ -4,12 +4,25 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
+from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import ttk
 
+from ghost_dvr.config import save_config
 from ghost_dvr.engine import DvrEngine
 from ghost_dvr.preview import PreviewFrameGrabber
+from ghost_dvr.storage import StorageMonitor
 from ghost_dvr.stream_profile import describe_stream_profile
+
+
+DURATION_OPTIONS = {
+    "15 minutes": 15,
+    "25 minutes": 25,
+    "30 minutes": 30,
+    "40 minutes": 40,
+    "1 hour": 60,
+    "Infinite": 0,
+}
 
 
 class MainWindow:
@@ -17,18 +30,22 @@ class MainWindow:
         self,
         engine: DvrEngine,
         *,
+        config_file: Path | None = None,
+        default_recordings_dir: Path | None = None,
         preview_grabber: PreviewFrameGrabber | None = None,
         refresh_ms: int = 1000,
         preview_refresh_ms: int = 5000,
     ) -> None:
         self.engine = engine
+        self.config_file = config_file
+        self.default_recordings_dir = default_recordings_dir or engine.recorder.recordings_dir
         self.preview_grabber = preview_grabber
         self.refresh_ms = refresh_ms
         self.preview_refresh_ms = preview_refresh_ms
         self.root = tk.Tk()
         self.root.title("Ghost DVR")
-        self.root.geometry("720x420")
-        self.root.minsize(560, 360)
+        self.root.geometry("860x600")
+        self.root.minsize(680, 520)
 
         self.device_var = tk.StringVar()
         self.source_var = tk.StringVar()
@@ -38,6 +55,8 @@ class MainWindow:
         self.duration_var = tk.StringVar(value="00:00:00")
         self.message_var = tk.StringVar(value="")
         self.recording_button_var = tk.StringVar(value="Start Recording")
+        self.duration_setting_var = tk.StringVar(value="Infinite")
+        self.save_folder_var = tk.StringVar(value="")
         self.is_recording = False
         self.preview_image: tk.PhotoImage | None = None
         self.preview_in_progress = False
@@ -89,8 +108,42 @@ class MainWindow:
         self.preview.grid(row=7, column=0, columnspan=2, sticky="nsew", pady=16)
         frame.rowconfigure(7, weight=1)
 
+        settings = ttk.LabelFrame(frame, text="Recording Settings", padding=10)
+        settings.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        settings.columnconfigure(1, weight=1)
+        settings.columnconfigure(3, weight=2)
+
+        ttk.Label(settings, text="Record Time").grid(row=0, column=0, sticky="w")
+        self.duration_combo = ttk.Combobox(
+            settings,
+            textvariable=self.duration_setting_var,
+            values=list(DURATION_OPTIONS.keys()),
+            state="readonly",
+            width=14,
+        )
+        self.duration_combo.grid(row=0, column=1, sticky="ew", padx=(8, 16))
+
+        ttk.Label(settings, text="Save Folder").grid(row=0, column=2, sticky="w")
+        ttk.Entry(settings, textvariable=self.save_folder_var).grid(
+            row=0,
+            column=3,
+            sticky="ew",
+            padx=(8, 8),
+        )
+        ttk.Button(settings, text="Browse", command=self.browse_save_folder).grid(
+            row=0,
+            column=4,
+            sticky="ew",
+        )
+        ttk.Button(settings, text="Save Settings", command=self.save_recording_settings).grid(
+            row=0,
+            column=5,
+            sticky="ew",
+            padx=(8, 0),
+        )
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=8, column=0, columnspan=2, sticky="ew")
+        buttons.grid(row=9, column=0, columnspan=2, sticky="ew")
         ttk.Button(
             buttons,
             textvariable=self.recording_button_var,
@@ -99,6 +152,7 @@ class MainWindow:
             side="left",
         )
         ttk.Button(buttons, text="Exit", command=self.root.destroy).pack(side="right")
+        self._load_recording_settings()
 
     def refresh(self) -> None:
         status = self.engine.snapshot()
@@ -149,6 +203,49 @@ class MainWindow:
             self.preview_paused = False
             self.last_preview_refresh = time.monotonic()
             self.refresh()
+
+    def browse_save_folder(self) -> None:
+        selected = filedialog.askdirectory(
+            title="Choose Ghost DVR recording folder",
+            initialdir=self.save_folder_var.get() or str(self.default_recordings_dir),
+        )
+        if selected:
+            self.save_folder_var.set(selected)
+
+    def save_recording_settings(self) -> None:
+        if self.is_recording or self.engine.recorder.is_recording():
+            message = "Stop recording before changing recording settings"
+            self.message_var.set(message)
+            messagebox.showerror("Ghost DVR", message)
+            return
+        if self.config_file is None:
+            message = "Config file is not available"
+            self.message_var.set(message)
+            messagebox.showerror("Ghost DVR", message)
+            return
+
+        try:
+            max_duration = duration_label_to_minutes(self.duration_setting_var.get())
+            preferred_path = self.save_folder_var.get().strip()
+            active_dir = resolve_recordings_dir(
+                preferred_path,
+                runtime_dir=self.config_file.parent,
+                fallback_dir=self.default_recordings_dir,
+            )
+            recording_config = self.engine.config.setdefault("recording", {})
+            storage_config = self.engine.config.setdefault("storage", {})
+            recording_config["max_duration_minutes"] = max_duration
+            storage_config["preferred_paths"] = [preferred_path] if preferred_path else []
+            self.engine.recorder.recordings_dir = active_dir
+            self.engine.storage_monitor = StorageMonitor(
+                active_dir,
+                warning_percent=int(recording_config.get("storage_warning_percent", 10)),
+            )
+            save_config(self.config_file, self.engine.config)
+            self.message_var.set("Recording settings saved")
+        except Exception as exc:
+            self.message_var.set(str(exc))
+            messagebox.showerror("Ghost DVR", str(exc))
 
     def _refresh_preview(self, status: dict[str, object]) -> None:
         if self.preview_grabber is None:
@@ -217,11 +314,55 @@ class MainWindow:
             return
         self.preview.configure(image=self.preview_image, text="")
 
+    def _load_recording_settings(self) -> None:
+        recording_config = self.engine.config.get("recording", {})
+        storage_config = self.engine.config.get("storage", {})
+        duration = int(recording_config.get("max_duration_minutes", 0) or 0)
+        self.duration_setting_var.set(duration_minutes_to_label(duration))
+        preferred_paths = storage_config.get("preferred_paths", [])
+        if isinstance(preferred_paths, list) and preferred_paths:
+            self.save_folder_var.set(str(preferred_paths[0]))
+        else:
+            self.save_folder_var.set("")
+
 
 def format_duration(total_seconds: int) -> str:
     hours, remainder = divmod(max(0, total_seconds), 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def duration_label_to_minutes(label: str) -> int:
+    if label not in DURATION_OPTIONS:
+        raise ValueError("Record time must be 15, 25, 30, 40, 1 hour, or infinite")
+    return DURATION_OPTIONS[label]
+
+
+def duration_minutes_to_label(minutes: int) -> str:
+    for label, value in DURATION_OPTIONS.items():
+        if value == minutes:
+            return label
+    return "Infinite"
+
+
+def resolve_recordings_dir(
+    preferred_path: str,
+    *,
+    runtime_dir: Path,
+    fallback_dir: Path,
+) -> Path:
+    raw_path = preferred_path.strip()
+    if not raw_path:
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        return fallback_dir
+
+    path = Path(raw_path)
+    candidate = path if path.is_absolute() else runtime_dir / path
+    candidate.mkdir(parents=True, exist_ok=True)
+    probe = candidate / ".ghost_dvr_write_test"
+    probe.write_text("ok", encoding="utf-8")
+    probe.unlink()
+    return candidate
 
 
 def stream_profile_from_status(status: dict[str, object]) -> str:

@@ -14,6 +14,7 @@ from ghost_dvr.preview import PreviewFrameGrabber
 from ghost_dvr.recording_library import list_recordings
 from ghost_dvr.sources.factory import create_source
 from ghost_dvr.sources.base import SourceConfig
+from ghost_dvr.storage import StorageMonitor
 from ghost_dvr.system_metrics import system_metrics
 
 
@@ -85,16 +86,23 @@ class GhostDvrApiServer:
                 if parsed_path.path == "/config/recording":
                     self._send_json(_recording_config_payload(config))
                     return
+                if parsed_path.path == "/config/storage":
+                    self._send_json(_storage_config_payload(config, engine, recordings_dir))
+                    return
                 if parsed_path.path == "/events":
                     self._send_json({"events": _read_events(events_log)})
                     return
                 if parsed_path.path == "/recordings":
+                    active_recordings_dir = _active_recordings_dir(engine, recordings_dir)
                     self._send_json(
-                        {"recordings": [item.to_dict() for item in list_recordings(recordings_dir)]}
+                        {"recordings": [item.to_dict() for item in list_recordings(active_recordings_dir)]}
                     )
                     return
                 if parsed_path.path == "/recordings/download":
-                    self._send_recording_download(recordings_dir, parsed_path.query)
+                    self._send_recording_download(
+                        _active_recordings_dir(engine, recordings_dir),
+                        parsed_path.query,
+                    )
                     return
                 if parsed_path.path == "/preview":
                     self._send_preview(engine, preview_grabber, parsed_path.query)
@@ -110,7 +118,11 @@ class GhostDvrApiServer:
                     self._handle_engine_action(engine.stop_recording)
                     return
                 if parsed_path.path == "/recordings/delete":
-                    self._handle_recording_delete(engine, config, recordings_dir)
+                    self._handle_recording_delete(
+                        engine,
+                        config,
+                        _active_recordings_dir(engine, recordings_dir),
+                    )
                     return
                 if parsed_path.path == "/config/sources":
                     self._handle_source_config_save(engine, config, config_file)
@@ -120,6 +132,14 @@ class GhostDvrApiServer:
                     return
                 if parsed_path.path == "/config/recording":
                     self._handle_recording_config_save(engine, config, config_file)
+                    return
+                if parsed_path.path == "/config/storage":
+                    self._handle_storage_config_save(
+                        engine,
+                        config,
+                        config_file,
+                        recordings_dir,
+                    )
                     return
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -256,6 +276,47 @@ class GhostDvrApiServer:
                 except Exception as exc:
                     self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
+            def _handle_storage_config_save(
+                self,
+                engine: DvrEngine,
+                config: dict[str, Any],
+                config_file: Path | None,
+                fallback_recordings_dir: Path,
+            ) -> None:
+                if engine.recorder.is_recording():
+                    self._send_json(
+                        {"error": "Stop recording before changing storage settings"},
+                        HTTPStatus.CONFLICT,
+                    )
+                    return
+                if config_file is None:
+                    self._send_json(
+                        {"error": "Config file is not available"},
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                    )
+                    return
+                try:
+                    payload = self._read_json_body()
+                    storage_config = _normalize_storage_config(payload)
+                    active_path = _select_recordings_dir(
+                        storage_config.get("preferred_paths", []),
+                        config_file.parent,
+                        fallback_recordings_dir,
+                    )
+                    config["storage"] = storage_config
+                    engine.config["storage"] = storage_config
+                    engine.recorder.recordings_dir = active_path
+                    engine.storage_monitor = StorageMonitor(
+                        active_path,
+                        warning_percent=int(
+                            config.get("recording", {}).get("storage_warning_percent", 10)
+                        ),
+                    )
+                    save_config(config_file, config)
+                    self._send_json(_storage_config_payload(config, engine, fallback_recordings_dir))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
             def _send_recording_download(
                 self,
                 recordings_dir: Path,
@@ -353,6 +414,13 @@ def _metadata_file_for_recording(video_file: Path) -> Path:
     return video_file.with_name(f"{stem}.json")
 
 
+def _active_recordings_dir(engine: DvrEngine, fallback_recordings_dir: Path) -> Path:
+    recordings_dir = getattr(engine.recorder, "recordings_dir", None)
+    if isinstance(recordings_dir, Path) and recordings_dir.is_absolute():
+        return recordings_dir
+    return fallback_recordings_dir
+
+
 def _source_config_payload(config: dict[str, Any], engine: DvrEngine) -> dict[str, Any]:
     return {
         "sources": [_public_source_config(source) for source in config.get("sources", [])],
@@ -373,6 +441,55 @@ def _recording_config_payload(config: dict[str, Any]) -> dict[str, Any]:
         "segment_minutes": int(recording.get("segment_minutes", 15) or 15),
         "duration_options": [15, 25, 30, 40, 60, 0],
     }
+
+
+def _storage_config_payload(
+    config: dict[str, Any],
+    engine: DvrEngine,
+    fallback_recordings_dir: Path,
+) -> dict[str, Any]:
+    storage = config.get("storage", {})
+    preferred_paths = storage.get("preferred_paths", [])
+    if not isinstance(preferred_paths, list):
+        preferred_paths = []
+    return {
+        "preferred_path": str(preferred_paths[0]) if preferred_paths else "",
+        "preferred_paths": [str(path) for path in preferred_paths],
+        "active_recordings_dir": str(_active_recordings_dir(engine, fallback_recordings_dir)),
+        "fallback_recordings_dir": str(fallback_recordings_dir),
+    }
+
+
+def _normalize_storage_config(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("storage config must be an object")
+    raw_path = str(payload.get("preferred_path", "")).strip()
+    return {
+        "_notes": "preferred_paths can list external recording folders. First usable path wins. Leave empty to use runtime/recordings.",
+        "preferred_paths": [raw_path] if raw_path else [],
+    }
+
+
+def _select_recordings_dir(
+    preferred_paths: list[str],
+    runtime_dir: Path,
+    fallback_recordings_dir: Path,
+) -> Path:
+    for raw_path in preferred_paths:
+        path = Path(str(raw_path))
+        candidate = path if path.is_absolute() else runtime_dir / path
+        if _is_writable_directory(candidate):
+            return candidate
+    fallback_recordings_dir.mkdir(parents=True, exist_ok=True)
+    return fallback_recordings_dir
+
+
+def _is_writable_directory(path: Path) -> bool:
+    path.mkdir(parents=True, exist_ok=True)
+    probe = path / ".ghost_dvr_write_test"
+    probe.write_text("ok", encoding="utf-8")
+    probe.unlink()
+    return True
 
 
 def _normalize_recording_config(
@@ -575,6 +692,10 @@ def _web_page() -> str:
       border-radius: 6px;
       padding: 14px;
     }
+    .panel h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
     .label {
       color: #5b6472;
       font-size: 13px;
@@ -640,6 +761,10 @@ def _web_page() -> str:
       border-radius: 4px;
       padding: 6px 8px;
       font: inherit;
+    }
+    input[readonly] {
+      background: #f8fafc;
+      color: #475569;
     }
     .actions {
       display: flex;
@@ -729,6 +854,9 @@ def _web_page() -> str:
       align-items: end;
       margin: 14px 0;
     }
+    .settings-row button {
+      width: 100%;
+    }
   </style>
 </head>
 <body>
@@ -789,6 +917,22 @@ def _web_page() -> str:
     <section id="recordingsTab" class="tab-panel" hidden>
       <h2>Recordings</h2>
       <section class="panel">
+        <h3>Storage</h3>
+        <div class="settings-row">
+          <label>
+            <span class="label">Active Recording Folder</span>
+            <input id="activeRecordingsDir" type="text" readonly>
+          </label>
+          <label>
+            <span class="label">Preferred Save Folder</span>
+            <input id="preferredRecordingsDir" type="text" placeholder="/media/pi/GhostDVR">
+          </label>
+          <button id="saveStorageConfigButton" type="button">Save Storage</button>
+        </div>
+        <p class="message">Leave preferred folder blank to use the default runtime recordings folder. Stop recording before changing storage.</p>
+        <div id="storageConfigMessage" class="message"></div>
+      </section>
+      <section class="panel">
         <h3>Recording Limits</h3>
         <div class="settings-row">
           <label>
@@ -840,6 +984,7 @@ def _web_page() -> str:
     let sourceConfigs = [];
     let sourceConfigLoaded = false;
     let recordingConfigLoaded = false;
+    let storageConfigLoaded = false;
 
     async function requestJson(path, options) {
       const response = await fetch(path, options);
@@ -853,6 +998,7 @@ def _web_page() -> str:
       const system = await requestJson('/system');
       const sourceConfig = await requestJson('/config/sources');
       const recordingConfig = await requestJson('/config/recording');
+      const storageConfig = await requestJson('/config/storage');
       const recordings = await requestJson('/recordings');
       const events = await requestJson('/events');
       const sources = status.sources || [];
@@ -886,6 +1032,10 @@ def _web_page() -> str:
       if (!recordingConfigLoaded) {
         renderRecordingConfig(recordingConfig);
         recordingConfigLoaded = true;
+      }
+      if (!storageConfigLoaded) {
+        renderStorageConfig(storageConfig);
+        storageConfigLoaded = true;
       }
       renderRecordings(recordings.recordings || []);
       document.getElementById('events').textContent = (events.events || []).join('\\n');
@@ -1102,6 +1252,33 @@ def _web_page() -> str:
       document.getElementById('recordingsMessage').textContent = message;
     }
 
+    function renderStorageConfig(config) {
+      document.getElementById('activeRecordingsDir').value = config.active_recordings_dir || '';
+      document.getElementById('preferredRecordingsDir').value = config.preferred_path || '';
+    }
+
+    async function saveStorageConfig() {
+      setStorageConfigMessage('Saving storage settings...');
+      const response = await requestJson('/config/storage', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          preferred_path: document.getElementById('preferredRecordingsDir').value
+        })
+      });
+      renderStorageConfig(response);
+      storageConfigLoaded = true;
+      setStorageConfigMessage('Storage settings saved.');
+      const recordings = await requestJson('/recordings');
+      renderRecordings(recordings.recordings || []);
+    }
+
+    function setStorageConfigMessage(message) {
+      document.getElementById('storageConfigMessage').textContent = message;
+    }
+
     function renderRecordingConfig(config) {
       document.getElementById('recordingDuration').value = String(config.max_duration_minutes ?? 0);
       document.getElementById('freeGbFloor').value = String(config.stop_when_free_gb_below ?? 2);
@@ -1225,6 +1402,14 @@ def _web_page() -> str:
         await saveSources();
       } catch (error) {
         setConfigMessage(`Save failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('saveStorageConfigButton').addEventListener('click', async () => {
+      try {
+        await saveStorageConfig();
+      } catch (error) {
+        setStorageConfigMessage(`Save failed: ${error.message}`);
       }
     });
 
