@@ -143,6 +143,10 @@ chmod +x Run_Ghost_DVR_API_Pi.sh Run_Ghost_DVR_Pi.sh Run_Ghost_DVR_Setup_Pi.sh
 The camera settings under `~/GhostDVR/runtime/` are ignored by Git and are not
 removed by this.
 
+The dashboard updater can automatically restore known launcher-file drift before
+pulling updates. If it reports other local changes, review those files manually
+before updating.
+
 ## Raspberry Pi GPIO LED
 
 The default status LED pin is GPIO 18.

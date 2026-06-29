@@ -58,6 +58,7 @@ class UpdaterTests(unittest.TestCase):
                     _git_result("main\n"),
                     _git_result("origin/main\n"),
                     _git_result("1\n"),
+                    _git_result(""),
                     _git_result("Updating\n"),
                     _git_result("def456\n"),
                     _git_result("main\n"),
@@ -71,6 +72,82 @@ class UpdaterTests(unittest.TestCase):
             self.assertFalse(status.update_available)
             self.assertIn("Restarting", status.message)
             self.assertTrue(update_applied(status))
+
+    def test_run_update_restores_known_launcher_changes_before_pull(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".git").mkdir()
+
+            with patch("ghost_dvr.updater.subprocess.run") as run:
+                run.side_effect = [
+                    _git_result("abc123\n"),
+                    _git_result("main\n"),
+                    _git_result("origin/main\n"),
+                    _git_result("1\n"),
+                    _git_result(" M Run_Ghost_DVR_API_Pi.sh\n"),
+                    _git_result(""),
+                    _git_result("Updating\n"),
+                    _git_result("def456\n"),
+                    _git_result("main\n"),
+                    _git_result("origin/main\n"),
+                    _git_result("0\n"),
+                ]
+
+                status = run_update(root=root)
+
+            self.assertTrue(update_applied(status))
+            self.assertIn(
+                ["git", "restore", "--", "Run_Ghost_DVR_API_Pi.sh"],
+                [call.args[0] for call in run.call_args_list],
+            )
+
+    def test_run_update_blocks_unknown_local_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".git").mkdir()
+
+            with patch("ghost_dvr.updater.subprocess.run") as run:
+                run.side_effect = [
+                    _git_result("abc123\n"),
+                    _git_result("main\n"),
+                    _git_result("origin/main\n"),
+                    _git_result("1\n"),
+                    _git_result(" M README.md\n"),
+                ]
+
+                status = run_update(root=root)
+
+            self.assertFalse(update_applied(status))
+            self.assertIn("README.md", status.message)
+
+    def test_git_error_message_keeps_useful_pull_details(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".git").mkdir()
+
+            with patch("ghost_dvr.updater.subprocess.run") as run:
+                run.side_effect = [
+                    _git_result("abc123\n"),
+                    _git_result("main\n"),
+                    _git_result("origin/main\n"),
+                    _git_result("1\n"),
+                    _git_result(""),
+                    _git_result(
+                        "",
+                        stderr=(
+                            "error: Your local changes to the following files would be overwritten by merge:\n"
+                            "\tREADME.md\n"
+                            "Please commit your changes or stash them before you merge.\n"
+                            "Aborting\n"
+                        ),
+                        returncode=1,
+                    ),
+                ]
+
+                status = run_update(root=root)
+
+            self.assertIn("README.md", status.message)
+            self.assertNotEqual(status.message, "Update failed: Aborting")
 
 
 def _git_result(stdout: str, stderr: str = "", returncode: int = 0):

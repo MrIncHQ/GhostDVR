@@ -12,6 +12,12 @@ from ghost_dvr import __version__
 
 
 RESTART_EXIT_CODE = 75
+AUTO_RESTORE_UPDATE_FILES = {
+    "Run_Ghost_DVR.bat",
+    "Run_Ghost_DVR_API.bat",
+    "Run_Ghost_DVR_Pi.sh",
+    "Run_Ghost_DVR_API_Pi.sh",
+}
 
 
 @dataclass(frozen=True)
@@ -116,6 +122,41 @@ def run_update(
     if not current.git_available:
         return current
 
+    blocked = _blocking_local_changes(root, timeout_seconds)
+    if blocked:
+        restorable = [path for path in blocked if path in AUTO_RESTORE_UPDATE_FILES]
+        non_restorable = [path for path in blocked if path not in AUTO_RESTORE_UPDATE_FILES]
+        if non_restorable:
+            return UpdateStatus(
+                version=__version__,
+                commit=current.commit,
+                branch=current.branch,
+                git_available=True,
+                update_available=current.update_available,
+                behind_count=current.behind_count,
+                checked_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                message=(
+                    "Update blocked by local changes: "
+                    + ", ".join(non_restorable[:5])
+                ),
+            )
+        restore_result = _run_git(
+            ["restore", "--", *restorable],
+            root,
+            timeout_seconds,
+        )
+        if restore_result.returncode != 0:
+            return UpdateStatus(
+                version=__version__,
+                commit=current.commit,
+                branch=current.branch,
+                git_available=True,
+                update_available=current.update_available,
+                behind_count=current.behind_count,
+                checked_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                message=_git_error_message(restore_result, "Update cleanup failed"),
+            )
+
     result = _run_git(["pull", "--ff-only"], root, timeout_seconds)
     if result.returncode != 0:
         return UpdateStatus(
@@ -167,6 +208,23 @@ def _git_text(args: list[str], root: Path, timeout_seconds: int) -> str:
     return result.stdout.strip()
 
 
+def _blocking_local_changes(root: Path, timeout_seconds: int) -> list[str]:
+    result = _run_git(["status", "--porcelain"], root, timeout_seconds)
+    if result.returncode != 0:
+        return []
+
+    paths: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line or line.startswith("??"):
+            continue
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
+        if path:
+            paths.append(path)
+    return paths
+
+
 def _run_git(
     args: list[str],
     root: Path,
@@ -200,4 +258,13 @@ def _git_error_message(
     detail = (result.stderr or result.stdout or "").strip()
     if not detail:
         return fallback
-    return f"{fallback}: {detail.splitlines()[-1]}"
+    meaningful_lines = [
+        line.strip()
+        for line in detail.splitlines()
+        if line.strip()
+        and not line.strip().startswith("hint:")
+        and line.strip() != "Aborting"
+    ]
+    if not meaningful_lines:
+        meaningful_lines = [detail.splitlines()[-1].strip()]
+    return f"{fallback}: {' | '.join(meaningful_lines[-4:])}"
