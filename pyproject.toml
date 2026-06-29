@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Offline-first portable DVR platform."
 requires-python = ">=3.11"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Non-Commercial Source-Available" }
 
 [project.scripts]
 ghost-dvr = "ghost_dvr.app:main"

@@ -224,4 +224,5 @@ curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh
 
 ## License
 
-Ghost DVR is released under the MIT License.
+Ghost DVR is released under a non-commercial source-available license. See
+`LICENSE` for details.
