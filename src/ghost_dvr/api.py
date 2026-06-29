@@ -772,11 +772,46 @@ def _web_page() -> str:
     :root {
       color-scheme: light;
       font-family: Segoe UI, system-ui, sans-serif;
-      background: #f4f6f8;
-      color: #111827;
+      --page-bg: #f4f6f8;
+      --panel-bg: #ffffff;
+      --panel-border: #d7dde5;
+      --text: #111827;
+      --muted: #5b6472;
+      --button-bg: #1f2937;
+      --button-text: #ffffff;
+      --secondary-bg: #ffffff;
+      --secondary-text: #1f2937;
+      --secondary-hover: #eef2f7;
+      --input-bg: #ffffff;
+      --input-readonly-bg: #f8fafc;
+      --table-border: #e5e9ef;
+      --preview-bg: #101820;
+      --preview-border: #27313d;
+      background: var(--page-bg);
+      color: var(--text);
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --page-bg: #101317;
+      --panel-bg: #181d23;
+      --panel-border: #2b3440;
+      --text: #f3f6fa;
+      --muted: #a8b3c2;
+      --button-bg: #e5edf7;
+      --button-text: #111827;
+      --secondary-bg: #202731;
+      --secondary-text: #f3f6fa;
+      --secondary-hover: #2a3340;
+      --input-bg: #11161c;
+      --input-readonly-bg: #151b22;
+      --table-border: #2b3440;
+      --preview-bg: #05070a;
+      --preview-border: #2b3440;
     }
     body {
       margin: 0;
+      background: var(--page-bg);
+      color: var(--text);
     }
     main {
       max-width: 980px;
@@ -798,7 +833,7 @@ def _web_page() -> str:
       display: flex;
       gap: 8px;
       margin: 0 0 16px;
-      border-bottom: 1px solid #d7dde5;
+      border-bottom: 1px solid var(--panel-border);
     }
     .tab-button {
       min-width: 96px;
@@ -807,11 +842,11 @@ def _web_page() -> str:
       border-bottom: 3px solid transparent;
       border-radius: 0;
       background: transparent;
-      color: #374151;
+      color: var(--muted);
     }
     .tab-button.active {
-      border-bottom-color: #1f2937;
-      color: #111827;
+      border-bottom-color: var(--text);
+      color: var(--text);
       font-weight: 650;
     }
     .tab-panel[hidden] {
@@ -823,8 +858,8 @@ def _web_page() -> str:
       gap: 12px;
     }
     .panel {
-      background: #ffffff;
-      border: 1px solid #d7dde5;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
       border-radius: 6px;
       padding: 14px;
     }
@@ -833,7 +868,7 @@ def _web_page() -> str:
       font-size: 18px;
     }
     .label {
-      color: #5b6472;
+      color: var(--muted);
       font-size: 13px;
       margin-bottom: 6px;
     }
@@ -847,10 +882,10 @@ def _web_page() -> str:
       min-height: 220px;
       margin: 16px 0;
       place-items: center;
-      background: #101820;
+      background: var(--preview-bg);
       color: #e5e7eb;
       border-radius: 6px;
-      border: 1px solid #27313d;
+      border: 1px solid var(--preview-border);
       overflow: hidden;
     }
     .preview-grid {
@@ -860,14 +895,14 @@ def _web_page() -> str:
       margin: 16px 0;
     }
     .preview-card {
-      background: #ffffff;
-      border: 1px solid #d7dde5;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
       border-radius: 6px;
       overflow: hidden;
     }
     .preview-title {
       padding: 10px 12px;
-      border-bottom: 1px solid #d7dde5;
+      border-bottom: 1px solid var(--panel-border);
       font-weight: 650;
     }
     .preview img {
@@ -879,10 +914,10 @@ def _web_page() -> str:
     button {
       min-width: 148px;
       min-height: 40px;
-      border: 1px solid #1f2937;
+      border: 1px solid var(--button-bg);
       border-radius: 6px;
-      background: #1f2937;
-      color: white;
+      background: var(--button-bg);
+      color: var(--button-text);
       font: inherit;
       cursor: pointer;
     }
@@ -893,14 +928,16 @@ def _web_page() -> str:
       box-sizing: border-box;
       width: 100%;
       min-height: 36px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--panel-border);
       border-radius: 4px;
       padding: 6px 8px;
       font: inherit;
+      background: var(--input-bg);
+      color: var(--text);
     }
     input[readonly] {
-      background: #f8fafc;
-      color: #475569;
+      background: var(--input-readonly-bg);
+      color: var(--muted);
     }
     .actions {
       display: flex;
@@ -912,8 +949,8 @@ def _web_page() -> str:
       min-width: 120px;
     }
     .secondary {
-      background: #ffffff;
-      color: #1f2937;
+      background: var(--secondary-bg);
+      color: var(--secondary-text);
     }
     .danger {
       background: #8a1f1f;
@@ -921,13 +958,13 @@ def _web_page() -> str:
     }
     .message {
       min-height: 20px;
-      color: #374151;
+      color: var(--muted);
     }
     pre {
       max-height: 220px;
       overflow: auto;
-      background: #ffffff;
-      border: 1px solid #d7dde5;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
       border-radius: 6px;
       padding: 12px;
       white-space: pre-wrap;
@@ -936,19 +973,19 @@ def _web_page() -> str:
       width: 100%;
       border-collapse: collapse;
       margin: 16px 0;
-      background: #ffffff;
-      border: 1px solid #d7dde5;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
       border-radius: 6px;
       overflow: hidden;
     }
     th, td {
-      border-bottom: 1px solid #e5e9ef;
+      border-bottom: 1px solid var(--table-border);
       padding: 10px;
       text-align: left;
       vertical-align: middle;
     }
     th {
-      color: #5b6472;
+      color: var(--muted);
       font-size: 13px;
       font-weight: 650;
     }
@@ -961,15 +998,15 @@ def _web_page() -> str:
       justify-content: center;
       min-width: 82px;
       min-height: 36px;
-      border: 1px solid #1f2937;
+      border: 1px solid var(--button-bg);
       border-radius: 6px;
-      background: #ffffff;
-      color: #1f2937;
+      background: var(--secondary-bg);
+      color: var(--secondary-text);
       font-weight: 650;
       text-decoration: none;
     }
     a.download:hover {
-      background: #eef2f7;
+      background: var(--secondary-hover);
     }
     .camera-table {
       table-layout: fixed;
@@ -1018,6 +1055,7 @@ def _web_page() -> str:
     <header>
       <h1>Ghost DVR</h1>
       <div>
+        <button id="themeToggleButton" type="button" class="secondary">Dark Mode</button>
         <button id="recordButton" type="button">Start Recording</button>
       </div>
     </header>
@@ -1162,6 +1200,25 @@ def _web_page() -> str:
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || response.statusText);
       return data;
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem('ghostTheme', theme);
+      document.getElementById('themeToggleButton').textContent = theme === 'dark'
+        ? 'Light Mode'
+        : 'Dark Mode';
+    }
+
+    function initTheme() {
+      const savedTheme = localStorage.getItem('ghostTheme');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(savedTheme || (prefersDark ? 'dark' : 'light'));
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
     }
 
     async function refresh() {
@@ -1616,6 +1673,8 @@ def _web_page() -> str:
       }
     });
 
+    document.getElementById('themeToggleButton').addEventListener('click', toggleTheme);
+
     document.getElementById('checkUpdateButton').addEventListener('click', async () => {
       try {
         await checkUpdates();
@@ -1673,6 +1732,7 @@ def _web_page() -> str:
       });
     });
 
+    initTheme();
     refresh();
     refreshPreview();
     setInterval(refresh, 5000);
