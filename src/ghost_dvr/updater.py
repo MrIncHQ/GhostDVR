@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -10,6 +9,9 @@ from datetime import datetime
 from pathlib import Path
 
 from ghost_dvr import __version__
+
+
+RESTART_EXIT_CODE = 75
 
 
 @dataclass(frozen=True)
@@ -155,7 +157,7 @@ def update_applied(status: UpdateStatus) -> bool:
 
 def _restart_current_process(delay_seconds: float) -> None:
     time.sleep(delay_seconds)
-    os.execv(sys.executable, [sys.executable, *sys.argv])
+    os._exit(RESTART_EXIT_CODE)
 
 
 def _git_text(args: list[str], root: Path, timeout_seconds: int) -> str:

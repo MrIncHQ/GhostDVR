@@ -73,7 +73,8 @@ For a Pi with a screen:
 The local window is intentionally lightweight. It can start and stop recording,
 show preview/status, and change only the recording time and save folder.
 It also shows the current version and has update controls. Stop recording before
-running an update. Ghost DVR restarts itself after an update is applied.
+running an update. Ghost DVR restarts itself after an update is applied when it
+is started from the included launcher.
 
 For a headless Pi or browser-based control:
 
@@ -98,10 +99,14 @@ load, edit camera settings, and delete completed recordings. The dashboard is
 intended for a trusted local network only. Do not port-forward it or expose it
 directly to the internet.
 
+Recording downloads offer the original MKV and an MP4 export. Use MKV for the
+original field recording. Use MP4 when a Windows player has trouble opening the
+MKV file.
+
 The Status tab shows the current version. Use **Check Updates** to check
 immediately; if an update is found, Ghost DVR can apply it from that same prompt.
 Stop recording before updating. Ghost DVR restarts itself after an update is
-applied.
+applied when it is started from the included launcher.
 
 The Recordings tab lets you choose how long a recording session runs: 15, 25,
 30, 40, 60 minutes, or infinite. Infinite keeps recording until you stop it or

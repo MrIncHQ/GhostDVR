@@ -6,10 +6,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ghost_dvr.updater import check_update_status, run_update, update_applied
+from ghost_dvr.updater import (
+    RESTART_EXIT_CODE,
+    check_update_status,
+    run_update,
+    update_applied,
+)
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_restart_exit_code_matches_launcher_contract(self):
+        self.assertEqual(RESTART_EXIT_CODE, 75)
+
     def test_check_update_status_reports_non_git_checkout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             status = check_update_status(root=Path(temp_dir))

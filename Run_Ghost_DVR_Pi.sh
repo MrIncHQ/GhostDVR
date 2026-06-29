@@ -14,8 +14,16 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-"$PYTHON_BIN" -m ghost_dvr.app --ui
-status=$?
+while :; do
+  "$PYTHON_BIN" -m ghost_dvr.app --ui
+  status=$?
+  if [ "$status" -eq 75 ]; then
+    echo
+    echo "Ghost DVR updated. Restarting..."
+    continue
+  fi
+  break
+done
 
 if [ "$status" -ne 0 ]; then
   echo

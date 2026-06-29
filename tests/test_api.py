@@ -515,7 +515,42 @@ class ApiTests(unittest.TestCase):
                 )
 
                 self.assertEqual(body, b"video")
-                self.assertEqual(content_type, "application/octet-stream")
+                self.assertEqual(content_type, "video/x-matroska")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_recordings_download_mp4_exports_recording(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recordings_dir = Path(temp_dir) / "recordings"
+            recordings_dir.mkdir()
+            video = recordings_dir / "clip_000.mkv"
+            video.write_bytes(b"mkv")
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                recordings_dir=recordings_dir,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api._mp4_export_for_recording") as export:
+                    export_path = recordings_dir / "exports" / "clip_000.mp4"
+                    export_path.parent.mkdir()
+                    export_path.write_bytes(b"mp4")
+                    export.return_value = export_path
+
+                    body, content_type = _request_raw(
+                        "GET",
+                        port,
+                        "/recordings/download-mp4?file=clip_000.mkv",
+                    )
+
+                self.assertEqual(body, b"mp4")
+                self.assertEqual(content_type, "video/mp4")
+                export.assert_called_once_with(video)
             finally:
                 server.shutdown()
                 thread.join(timeout=5)

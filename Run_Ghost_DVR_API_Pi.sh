@@ -18,8 +18,16 @@ echo "Starting Ghost DVR API."
 echo "Leave this terminal open while using the browser interface."
 echo
 
-"$PYTHON_BIN" -m ghost_dvr.app --api
-status=$?
+while :; do
+  "$PYTHON_BIN" -m ghost_dvr.app --api
+  status=$?
+  if [ "$status" -eq 75 ]; then
+    echo
+    echo "Ghost DVR updated. Restarting API..."
+    continue
+  fi
+  break
+done
 
 if [ "$status" -ne 0 ]; then
   echo

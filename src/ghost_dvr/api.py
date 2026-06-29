@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import uuid
 from http import HTTPStatus
@@ -11,6 +12,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ghost_dvr.config import save_config
 from ghost_dvr.engine import DvrEngine
+from ghost_dvr.ffmpeg import find_ffmpeg
 from ghost_dvr.preview import PreviewFrameGrabber
 from ghost_dvr.recording_library import list_recordings
 from ghost_dvr.sources.factory import create_source
@@ -126,6 +128,12 @@ class GhostDvrApiServer:
                     return
                 if parsed_path.path == "/recordings/download":
                     self._send_recording_download(
+                        _active_recordings_dir(engine, recordings_dir),
+                        parsed_path.query,
+                    )
+                    return
+                if parsed_path.path == "/recordings/download-mp4":
+                    self._send_recording_mp4_download(
                         _active_recordings_dir(engine, recordings_dir),
                         parsed_path.query,
                     )
@@ -372,16 +380,43 @@ class GhostDvrApiServer:
                     )
                     return
 
-                body = path.read_bytes()
+                self._send_file_download(path)
+
+            def _send_recording_mp4_download(
+                self,
+                recordings_dir: Path,
+                query: str,
+            ) -> None:
+                requested_file = parse_qs(query).get("file", [""])[0]
+                path = _safe_recording_path(recordings_dir, requested_file)
+                if path is None or path.suffix.lower() not in {".mkv", ".mp4"}:
+                    self._send_json(
+                        {"error": "Recording not found"},
+                        HTTPStatus.NOT_FOUND,
+                    )
+                    return
+                try:
+                    mp4_path = _mp4_export_for_recording(path)
+                    self._send_file_download(mp4_path, content_type="video/mp4")
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+            def _send_file_download(
+                self,
+                path: Path,
+                content_type: str | None = None,
+            ) -> None:
                 self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Type", content_type or _content_type_for(path))
                 self.send_header(
                     "Content-Disposition",
                     f"attachment; filename*=UTF-8''{quote(path.name)}",
                 )
-                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Length", str(path.stat().st_size))
                 self.end_headers()
-                self.wfile.write(body)
+                with path.open("rb") as file:
+                    while chunk := file.read(1024 * 1024):
+                        self.wfile.write(chunk)
 
             def _send_preview(
                 self,
@@ -453,6 +488,66 @@ def _metadata_file_for_recording(video_file: Path) -> Path:
     if stem.endswith("_000"):
         stem = stem.removesuffix("_000")
     return video_file.with_name(f"{stem}.json")
+
+
+def _mp4_export_for_recording(video_file: Path) -> Path:
+    if video_file.suffix.lower() == ".mp4":
+        return video_file
+
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        raise RuntimeError("FFmpeg is required to export MP4")
+
+    export_dir = video_file.parent / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    output = export_dir / f"{video_file.stem}.mp4"
+    if output.exists() and output.stat().st_mtime >= video_file.stat().st_mtime:
+        return output
+
+    temp_output = output.with_suffix(".tmp.mp4")
+    if temp_output.exists():
+        temp_output.unlink()
+    result = subprocess.run(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(video_file),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(temp_output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        if temp_output.exists():
+            temp_output.unlink()
+        detail = (result.stderr or result.stdout or "MP4 export failed").strip()
+        raise RuntimeError(detail.splitlines()[-1])
+    temp_output.replace(output)
+    return output
+
+
+def _content_type_for(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".mp4":
+        return "video/mp4"
+    if suffix == ".mkv":
+        return "video/x-matroska"
+    if suffix == ".json":
+        return "application/json"
+    return "application/octet-stream"
 
 
 def _active_recordings_dir(engine: DvrEngine, fallback_recordings_dir: Path) -> Path:
@@ -1013,12 +1108,13 @@ def _web_page() -> str:
             <th>Duration</th>
             <th>Size</th>
             <th>Status</th>
-            <th>Download</th>
+            <th>Download MKV</th>
+            <th>Download MP4</th>
             <th>Delete</th>
           </tr>
         </thead>
         <tbody id="recordings">
-          <tr><td colspan="7">No recordings loaded</td></tr>
+          <tr><td colspan="8">No recordings loaded</td></tr>
         </tbody>
       </table>
     </section>
@@ -1261,7 +1357,7 @@ def _web_page() -> str:
       if (!recordings.length) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
-        cell.colSpan = 7;
+        cell.colSpan = 8;
         cell.textContent = 'No recordings yet';
         row.appendChild(cell);
         tbody.appendChild(row);
@@ -1275,13 +1371,14 @@ def _web_page() -> str:
         appendCell(row, formatDuration(recording.duration_seconds));
         appendCell(row, formatBytes(recording.size_bytes));
         appendCell(row, recording.status || '-');
-        const downloadCell = document.createElement('td');
-        const link = document.createElement('a');
-        link.className = 'download';
-        link.href = `/recordings/download?file=${encodeURIComponent(recording.video_file)}`;
-        link.textContent = 'Download';
-        downloadCell.appendChild(link);
-        row.appendChild(downloadCell);
+        row.appendChild(downloadLinkCell(
+          `/recordings/download?file=${encodeURIComponent(recording.video_file)}`,
+          'MKV'
+        ));
+        row.appendChild(downloadLinkCell(
+          `/recordings/download-mp4?file=${encodeURIComponent(recording.video_file)}`,
+          'MP4'
+        ));
         const deleteCell = document.createElement('td');
         const deleteButton = document.createElement('button');
         deleteButton.type = 'button';
@@ -1292,6 +1389,16 @@ def _web_page() -> str:
         row.appendChild(deleteCell);
         tbody.appendChild(row);
       }
+    }
+
+    function downloadLinkCell(href, label) {
+      const cell = document.createElement('td');
+      const link = document.createElement('a');
+      link.className = 'download';
+      link.href = href;
+      link.textContent = label;
+      cell.appendChild(link);
+      return cell;
     }
 
     async function deleteRecording(file) {
