@@ -29,6 +29,7 @@ echo
 echo "Installing app to: $INSTALL_DIR"
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "Existing Git install found. Updating..."
+  git -C "$INSTALL_DIR" restore -- "${LAUNCHERS[@]}" 2>/dev/null || true
   git -C "$INSTALL_DIR" fetch origin "$BRANCH"
   git -C "$INSTALL_DIR" checkout "$BRANCH"
   git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"

@@ -956,9 +956,20 @@ def _web_page() -> str:
       border-bottom: 0;
     }
     a.download {
-      color: #0f4c81;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 82px;
+      min-height: 36px;
+      border: 1px solid #1f2937;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #1f2937;
       font-weight: 650;
       text-decoration: none;
+    }
+    a.download:hover {
+      background: #eef2f7;
     }
     .camera-table {
       table-layout: fixed;
