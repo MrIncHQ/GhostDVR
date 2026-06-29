@@ -1411,12 +1411,13 @@ def _web_page() -> str:
     function renderDiscoveryResults(cameras) {
       const results = document.getElementById('discoveryResults');
       results.replaceChildren();
-      if (!cameras.length) {
-        setDiscoveryMessage('No ONVIF cameras found.');
+      const newCameras = cameras.filter(camera => !isDiscoveredCameraAlreadyListed(camera));
+      if (!newCameras.length) {
+        setDiscoveryMessage(cameras.length ? 'No new ONVIF cameras found.' : 'No ONVIF cameras found.');
         return;
       }
-        setDiscoveryMessage(`Found ${cameras.length} camera(s). Click Add to place one in the edit list.`);
-      for (const camera of cameras) {
+      setDiscoveryMessage(`Found ${newCameras.length} new camera(s). Click Add to place one in the edit list.`);
+      for (const camera of newCameras) {
         const item = document.createElement('div');
         item.className = 'discovery-item';
         const title = document.createElement('div');
@@ -1437,6 +1438,30 @@ def _web_page() -> str:
         item.appendChild(select);
         item.appendChild(add);
         results.appendChild(item);
+      }
+    }
+
+    function isDiscoveredCameraAlreadyListed(camera) {
+      const discoveredHost = String(camera.host || '').toLowerCase();
+      const discoveredAddresses = new Set((camera.rtsp_suggestions || []).map(address => normalizeAddress(address)));
+      for (const source of collectSources()) {
+        const sourceAddress = normalizeAddress(source.address || '');
+        const sourceHost = hostFromAddress(source.address || '');
+        if (sourceAddress && discoveredAddresses.has(sourceAddress)) return true;
+        if (discoveredHost && sourceHost && discoveredHost === sourceHost) return true;
+      }
+      return false;
+    }
+
+    function normalizeAddress(address) {
+      return String(address || '').trim().toLowerCase();
+    }
+
+    function hostFromAddress(address) {
+      try {
+        return new URL(String(address || '').trim()).hostname.toLowerCase();
+      } catch (error) {
+        return '';
       }
     }
 
