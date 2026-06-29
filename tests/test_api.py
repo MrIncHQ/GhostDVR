@@ -6,9 +6,11 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ghost_dvr.api import GhostDvrApiServer
 from ghost_dvr.preview import PreviewResult
+from ghost_dvr.updater import UpdateStatus
 
 
 class ApiTests(unittest.TestCase):
@@ -308,6 +310,67 @@ class ApiTests(unittest.TestCase):
                 self.assertIn("hostname", system)
                 self.assertIn("memory", system)
                 self.assertIn("uptime_seconds", system)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_update_status_endpoint_reports_version_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api.check_update_status") as check:
+                    check.return_value = _update_status(update_available=True)
+                    response = _request("GET", port, "/update/status?force=1")
+
+                self.assertTrue(response["update_available"])
+                self.assertEqual(response["version"], "0.1.0")
+                self.assertIn("Update available", response["message"])
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_update_run_endpoint_is_blocked_while_recording(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(recording=True),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request("POST", port, "/update/run")
+
+                self.assertEqual(response["error"], "Stop recording before updating Ghost DVR")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_update_run_endpoint_runs_updater(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api.run_update") as update:
+                    update.return_value = _update_status(message="Update applied")
+                    response = _request("POST", port, "/update/run")
+
+                self.assertEqual(response["message"], "Update applied")
+                update.assert_called_once()
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -690,6 +753,19 @@ def _api_config():
             }
         ],
     }
+
+
+def _update_status(update_available=False, message="Update available"):
+    return UpdateStatus(
+        version="0.1.0",
+        commit="abc123",
+        branch="main",
+        git_available=True,
+        update_available=update_available,
+        behind_count=1 if update_available else 0,
+        checked_at="2026-06-28T12:00:00-05:00",
+        message=message,
+    )
 
 
 def _request_text(method: str, port: int, path: str) -> str:

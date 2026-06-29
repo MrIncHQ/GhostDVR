@@ -27,6 +27,11 @@ class RecordingTests(unittest.TestCase):
             self.assertIn("copy", command)
             self.assertIn("-f", command)
             self.assertIn("segment", command)
+            self.assertIn("-map", command)
+            self.assertIn("0:v:0", command)
+            self.assertIn("0:a?", command)
+            self.assertIn("-segment_format", command)
+            self.assertIn("matroska", command)
             self.assertIn("-segment_time", command)
             self.assertIn("900", command)
             self.assertIn("test_video.mp4", command)
@@ -46,6 +51,10 @@ class RecordingTests(unittest.TestCase):
 
             self.assertLess(command.index("-rtsp_transport"), command.index("-i"))
             self.assertIn("tcp", command)
+            self.assertLess(command.index("-use_wallclock_as_timestamps"), command.index("-i"))
+            self.assertIn("+genpts+discardcorrupt", command)
+            self.assertIn("0:v:0", command)
+            self.assertIn("0:a?", command)
 
     def test_ffmpeg_command_loops_mock_source_in_realtime(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -80,6 +89,8 @@ class RecordingTests(unittest.TestCase):
 
             self.assertLess(command.index("-f"), command.index("-i"))
             self.assertIn("v4l2", command)
+            self.assertIn("0:v:0", command)
+            self.assertNotIn("0:a?", command)
             self.assertIn("libx264", command)
             self.assertIn("-an", command)
 

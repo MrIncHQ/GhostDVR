@@ -72,6 +72,8 @@ For a Pi with a screen:
 
 The local window is intentionally lightweight. It can start and stop recording,
 show preview/status, and change only the recording time and save folder.
+It also shows the current version and has update controls. Stop recording before
+running an update, then restart Ghost DVR after the update finishes.
 
 For a headless Pi or browser-based control:
 
@@ -95,6 +97,10 @@ The browser dashboard can view recordings, download recordings, show system
 load, edit camera settings, and delete completed recordings. The dashboard is
 intended for a trusted local network only. Do not port-forward it or expose it
 directly to the internet.
+
+The dashboard shows the current version and checks for updates every few hours.
+Use **Check Updates** to check immediately, or **Update** to pull the latest code.
+Stop recording before updating, then restart Ghost DVR after the update finishes.
 
 The Recordings tab lets you choose how long a recording session runs: 15, 25,
 30, 40, 60 minutes, or infinite. Infinite keeps recording until you stop it or

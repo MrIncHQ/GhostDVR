@@ -13,6 +13,10 @@ from ghost_dvr.engine import DvrEngine
 from ghost_dvr.preview import PreviewFrameGrabber
 from ghost_dvr.storage import StorageMonitor
 from ghost_dvr.stream_profile import describe_stream_profile
+from ghost_dvr.updater import check_update_status, run_update
+
+
+UPDATE_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000
 
 
 DURATION_OPTIONS = {
@@ -57,7 +61,10 @@ class MainWindow:
         self.recording_button_var = tk.StringVar(value="Start Recording")
         self.duration_setting_var = tk.StringVar(value="Infinite")
         self.save_folder_var = tk.StringVar(value="")
+        self.update_version_var = tk.StringVar(value="Version -")
+        self.update_status_var = tk.StringVar(value="Update status: checking")
         self.is_recording = False
+        self.update_in_progress = False
         self.preview_image: tk.PhotoImage | None = None
         self.preview_in_progress = False
         self.last_preview_refresh = 0.0
@@ -142,8 +149,35 @@ class MainWindow:
             padx=(8, 0),
         )
 
+        updates = ttk.LabelFrame(frame, text="Updates", padding=10)
+        updates.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        updates.columnconfigure(1, weight=1)
+        ttk.Label(updates, textvariable=self.update_version_var).grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 16),
+        )
+        ttk.Label(updates, textvariable=self.update_status_var).grid(
+            row=0,
+            column=1,
+            sticky="ew",
+        )
+        ttk.Button(updates, text="Check Updates", command=self.check_updates).grid(
+            row=0,
+            column=2,
+            sticky="ew",
+            padx=(8, 0),
+        )
+        ttk.Button(updates, text="Update", command=self.update_app).grid(
+            row=0,
+            column=3,
+            sticky="ew",
+            padx=(8, 0),
+        )
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=9, column=0, columnspan=2, sticky="ew")
+        buttons.grid(row=10, column=0, columnspan=2, sticky="ew")
         ttk.Button(
             buttons,
             textvariable=self.recording_button_var,
@@ -153,6 +187,7 @@ class MainWindow:
         )
         ttk.Button(buttons, text="Exit", command=self.root.destroy).pack(side="right")
         self._load_recording_settings()
+        self.check_updates(force=False)
 
     def refresh(self) -> None:
         status = self.engine.snapshot()
@@ -246,6 +281,58 @@ class MainWindow:
         except Exception as exc:
             self.message_var.set(str(exc))
             messagebox.showerror("Ghost DVR", str(exc))
+
+    def check_updates(self, force: bool = True) -> None:
+        if self.update_in_progress:
+            return
+        self.update_in_progress = True
+        self.update_status_var.set("Update status: checking")
+        threading.Thread(
+            target=self._check_updates_in_background,
+            args=(force,),
+            daemon=True,
+            name="ghost-dvr-update-check",
+        ).start()
+
+    def update_app(self) -> None:
+        if self.is_recording or self.engine.recorder.is_recording():
+            message = "Stop recording before updating Ghost DVR"
+            self.message_var.set(message)
+            messagebox.showerror("Ghost DVR", message)
+            return
+        if self.update_in_progress:
+            return
+        if not messagebox.askyesno(
+            "Ghost DVR",
+            "Update Ghost DVR now? Restart after the update finishes.",
+        ):
+            return
+        self.update_in_progress = True
+        self.update_status_var.set("Update status: updating")
+        threading.Thread(
+            target=self._run_update_in_background,
+            daemon=True,
+            name="ghost-dvr-update-run",
+        ).start()
+
+    def _check_updates_in_background(self, force: bool) -> None:
+        status = check_update_status(fetch=force)
+        self.root.after(0, lambda: self._apply_update_status(status))
+
+    def _run_update_in_background(self) -> None:
+        status = run_update()
+        self.root.after(0, lambda: self._apply_update_status(status))
+
+    def _apply_update_status(self, status) -> None:
+        self.update_in_progress = False
+        version = f"Version {status.version}"
+        if status.commit and status.commit != "-":
+            version = f"{version} ({status.commit})"
+        self.update_version_var.set(version)
+        state = "out of date" if status.update_available else "current"
+        self.update_status_var.set(f"Update status: {state}")
+        self.message_var.set(status.message)
+        self.root.after(UPDATE_CHECK_INTERVAL_MS, lambda: self.check_updates(force=True))
 
     def _refresh_preview(self, status: dict[str, object]) -> None:
         if self.preview_grabber is None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +17,10 @@ from ghost_dvr.sources.factory import create_source
 from ghost_dvr.sources.base import SourceConfig
 from ghost_dvr.storage import StorageMonitor
 from ghost_dvr.system_metrics import system_metrics
+from ghost_dvr.updater import check_update_status, run_update
+
+
+UPDATE_CHECK_INTERVAL_SECONDS = 3 * 60 * 60
 
 
 class PreviewGrabber(Protocol):
@@ -62,6 +67,21 @@ class GhostDvrApiServer:
         config_file = self.config_file
         recordings_dir = self.recordings_dir
         preview_grabber = self.preview_grabber
+        update_cache: dict[str, Any] = {"checked_at": 0.0, "payload": None}
+
+        def cached_update_status(force: bool = False) -> dict[str, object]:
+            now = time.monotonic()
+            should_fetch = force or (
+                update_cache["payload"] is not None
+                and now - float(update_cache["checked_at"]) >= UPDATE_CHECK_INTERVAL_SECONDS
+            )
+            if (
+                update_cache["payload"] is None
+                or should_fetch
+            ):
+                update_cache["payload"] = check_update_status(fetch=should_fetch).to_dict()
+                update_cache["checked_at"] = now
+            return dict(update_cache["payload"])
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
@@ -74,6 +94,12 @@ class GhostDvrApiServer:
                     return
                 if parsed_path.path == "/system":
                     self._send_json(system_metrics())
+                    return
+                if parsed_path.path == "/update/status":
+                    query = parse_qs(parsed_path.query)
+                    self._send_json(
+                        cached_update_status(force=query.get("force", ["0"])[0] == "1")
+                    )
                     return
                 if parsed_path.path == "/sources":
                     self._send_json(
@@ -140,6 +166,18 @@ class GhostDvrApiServer:
                         config_file,
                         recordings_dir,
                     )
+                    return
+                if parsed_path.path == "/update/run":
+                    if engine.recorder.is_recording():
+                        self._send_json(
+                            {"error": "Stop recording before updating Ghost DVR"},
+                            HTTPStatus.CONFLICT,
+                        )
+                        return
+                    payload = run_update().to_dict()
+                    update_cache["payload"] = payload
+                    update_cache["checked_at"] = time.monotonic()
+                    self._send_json(payload)
                     return
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -884,6 +922,23 @@ def _web_page() -> str:
         <div class="panel"><div class="label">Temperature</div><div id="temperature" class="value">-</div></div>
         <div class="panel"><div class="label">Uptime</div><div id="uptime" class="value">-</div></div>
       </section>
+      <section class="panel">
+        <h3>Updates</h3>
+        <div class="settings-row">
+          <div>
+            <div class="label">Version</div>
+            <div id="updateVersion" class="value">-</div>
+          </div>
+          <div>
+            <div class="label">Update Status</div>
+            <div id="updateStatus" class="value">Checking...</div>
+          </div>
+          <button id="checkUpdateButton" type="button" class="secondary">Check Updates</button>
+          <button id="runUpdateButton" type="button">Update</button>
+        </div>
+        <p class="message">Ghost DVR checks for updates every few hours. Restart after an update finishes.</p>
+        <div id="updateMessage" class="message"></div>
+      </section>
       <section class="preview-grid" id="previewGrid"></section>
     </section>
     <section id="camerasTab" class="tab-panel" hidden>
@@ -996,6 +1051,7 @@ def _web_page() -> str:
     async function refresh() {
       const status = await requestJson('/status');
       const system = await requestJson('/system');
+      const updateStatus = await requestJson('/update/status');
       const sourceConfig = await requestJson('/config/sources');
       const recordingConfig = await requestJson('/config/recording');
       const storageConfig = await requestJson('/config/storage');
@@ -1021,6 +1077,7 @@ def _web_page() -> str:
         ? 'Unknown'
         : `${system.temperature_c} C`;
       document.getElementById('uptime').textContent = formatUptime(system.uptime_seconds);
+      renderUpdateStatus(updateStatus);
       document.getElementById('profile').textContent = sourceConfig.hardware_profile?.name || '-';
       document.getElementById('recommendedSources').textContent = sourceConfig.recommended_sources || '-';
       if (!sourceConfigLoaded) {
@@ -1257,6 +1314,38 @@ def _web_page() -> str:
       document.getElementById('preferredRecordingsDir').value = config.preferred_path || '';
     }
 
+    function renderUpdateStatus(status) {
+      const version = status.commit && status.commit !== '-'
+        ? `${status.version || '-'} (${status.commit})`
+        : status.version || '-';
+      document.getElementById('updateVersion').textContent = version;
+      document.getElementById('updateStatus').textContent = status.update_available
+        ? 'Out of date'
+        : 'Current';
+      document.getElementById('updateMessage').textContent = status.message || '';
+    }
+
+    async function checkUpdates() {
+      setUpdateMessage('Checking for updates...');
+      const status = await requestJson('/update/status?force=1');
+      renderUpdateStatus(status);
+    }
+
+    async function runUpdate() {
+      if (isRecording) {
+        setUpdateMessage('Stop recording before updating Ghost DVR.');
+        return;
+      }
+      if (!confirm('Update Ghost DVR now? Restart after the update finishes.')) return;
+      setUpdateMessage('Updating Ghost DVR...');
+      const status = await requestJson('/update/run', { method: 'POST' });
+      renderUpdateStatus(status);
+    }
+
+    function setUpdateMessage(message) {
+      document.getElementById('updateMessage').textContent = message;
+    }
+
     async function saveStorageConfig() {
       setStorageConfigMessage('Saving storage settings...');
       const response = await requestJson('/config/storage', {
@@ -1382,6 +1471,22 @@ def _web_page() -> str:
         await requestJson(path, { method: 'POST' });
       } finally {
         await refresh();
+      }
+    });
+
+    document.getElementById('checkUpdateButton').addEventListener('click', async () => {
+      try {
+        await checkUpdates();
+      } catch (error) {
+        setUpdateMessage(`Update check failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('runUpdateButton').addEventListener('click', async () => {
+      try {
+        await runUpdate();
+      } catch (error) {
+        setUpdateMessage(`Update failed: ${error.message}`);
       }
     });
 

@@ -39,15 +39,24 @@ class FfmpegRecorder:
         if source.source_type == "mock":
             input_args = ["-re", "-stream_loop", "-1"]
         elif source.source_type == "rtsp":
-            input_args = ["-rtsp_transport", "tcp"]
+            input_args = [
+                "-rtsp_transport",
+                "tcp",
+                "-fflags",
+                "+genpts+discardcorrupt",
+                "-use_wallclock_as_timestamps",
+                "1",
+            ]
         elif source.source_type == "usb":
             if platform.system().lower() == "windows":
                 input_args = ["-f", "dshow"]
             else:
                 input_args = ["-f", "v4l2"]
 
+        stream_args = ["-map", "0:v:0", "-map", "0:a?", "-dn", "-sn"]
         codec_args = ["-c", "copy"]
         if source.source_type == "usb":
+            stream_args = ["-map", "0:v:0", "-dn", "-sn"]
             codec_args = ["-c:v", "libx264", "-preset", "ultrafast", "-an"]
 
         output_format = "segment"
@@ -60,9 +69,14 @@ class FfmpegRecorder:
             *input_args,
             "-i",
             source.stream or "",
+            *stream_args,
             *codec_args,
+            "-avoid_negative_ts",
+            "make_zero",
             "-f",
             output_format,
+            "-segment_format",
+            "matroska",
             "-segment_time",
             str(self.segment_minutes * 60),
             "-reset_timestamps",
