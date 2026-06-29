@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ghost_dvr.engine import SourceStatus
-from ghost_dvr.recording import FfmpegRecorder
+from ghost_dvr.recording import FfmpegRecorder, MultiSourceFfmpegRecorder
 
 
 class RecordingTests(unittest.TestCase):
@@ -125,6 +125,61 @@ class RecordingTests(unittest.TestCase):
 
             with self.assertRaises(RuntimeError):
                 recorder.start(source)
+
+    def test_start_includes_safe_source_name_in_output_pattern(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FfmpegRecorder(Path(temp_dir))
+            source = SourceStatus(
+                source_id="source-1",
+                name="Back PTZ / Main",
+                source_type="mock",
+                online=True,
+                stream="test_video.mp4",
+            )
+
+            with patch("subprocess.Popen", return_value=FakeProcess()):
+                session = recorder.start(source)
+
+            self.assertTrue(session.output_pattern.name.startswith("Back_PTZ_Main_"))
+
+    def test_multi_source_recorder_starts_one_session_per_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = MultiSourceFfmpegRecorder(Path(temp_dir))
+            sources = [
+                SourceStatus(
+                    source_id="source-1",
+                    name="Back PTZ",
+                    source_type="mock",
+                    online=True,
+                    stream="test_video.mp4",
+                ),
+                SourceStatus(
+                    source_id="source-2",
+                    name="Driveway",
+                    source_type="mock",
+                    online=True,
+                    stream="test_video.mp4",
+                ),
+            ]
+
+            with patch("subprocess.Popen", side_effect=[FakeProcess(), FakeProcess()]):
+                sessions = recorder.start_many(sources)
+
+            self.assertEqual([session.source_id for session in sessions], ["source-1", "source-2"])
+            self.assertEqual(set(recorder.sessions), {"source-1", "source-2"})
+            self.assertTrue(recorder.sessions["source-1"].output_pattern.name.startswith("Back_PTZ_"))
+            self.assertTrue(recorder.sessions["source-2"].output_pattern.name.startswith("Driveway_"))
+
+
+class FakeProcess:
+    def __init__(self) -> None:
+        self.stdin = None
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
 
 
 if __name__ == "__main__":

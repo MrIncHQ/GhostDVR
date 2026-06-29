@@ -20,7 +20,7 @@ from ghost_dvr.recording_library import (
     cleanup_plan,
     recordings_report,
 )
-from ghost_dvr.recording import FfmpegRecorder
+from ghost_dvr.recording import MultiSourceFfmpegRecorder
 from ghost_dvr.setup_wizard import run_setup_prompt
 from ghost_dvr.source_probe import probe_stream
 from ghost_dvr.storage import StorageMonitor, StorageSelector
@@ -58,7 +58,7 @@ def create_runtime_context(paths: RuntimePaths | None = None) -> RuntimeContext:
         config=config,
         status_file=runtime_paths.status_file,
         logger=logger,
-        recorder=FfmpegRecorder(
+        recorder=MultiSourceFfmpegRecorder(
             recordings_dir,
             segment_minutes=int(recording_config.get("segment_minutes", 15)),
         ),

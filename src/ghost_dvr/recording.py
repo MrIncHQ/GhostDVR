@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import platform
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ class RecordingSession:
 
 class RecordableSource(Protocol):
     source_id: str
+    name: str
     source_type: str
     online: bool
     stream: str | None
@@ -92,7 +94,11 @@ class FfmpegRecorder:
 
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         started_at = datetime.now().astimezone()
-        output_pattern = self.recordings_dir / f"{started_at:%Y-%m-%d_%H-%M-%S}_%03d.mkv"
+        source_prefix = _safe_filename_part(source.name or source.source_id)
+        output_pattern = (
+            self.recordings_dir
+            / f"{source_prefix}_{started_at:%Y-%m-%d_%H-%M-%S}_%03d.mkv"
+        )
         command = self.build_command(source, output_pattern)
 
         self.process = subprocess.Popen(
@@ -127,3 +133,56 @@ class FfmpegRecorder:
                 self.process.wait(timeout=5)
         self.process = None
         self.session = None
+
+
+class MultiSourceFfmpegRecorder:
+    def __init__(self, recordings_dir: Path, segment_minutes: int = 15) -> None:
+        self.recordings_dir = recordings_dir
+        self.segment_minutes = segment_minutes
+        self.recorders: dict[str, FfmpegRecorder] = {}
+        self.sessions: dict[str, RecordingSession] = {}
+
+    @property
+    def session(self) -> RecordingSession | None:
+        return next(iter(self.sessions.values()), None)
+
+    def is_recording(self) -> bool:
+        return any(recorder.is_recording() for recorder in self.recorders.values())
+
+    def start(self, source: RecordableSource) -> RecordingSession:
+        return self.start_many([source])[0]
+
+    def start_many(self, sources: list[RecordableSource]) -> list[RecordingSession]:
+        if self.is_recording():
+            raise RuntimeError("Recording is already active")
+
+        sessions: list[RecordingSession] = []
+        started_recorders: dict[str, FfmpegRecorder] = {}
+        try:
+            for source in sources:
+                recorder = FfmpegRecorder(self.recordings_dir, self.segment_minutes)
+                session = recorder.start(source)
+                started_recorders[source.source_id] = recorder
+                sessions.append(session)
+        except Exception:
+            for recorder in started_recorders.values():
+                recorder.stop()
+            self.recorders.clear()
+            self.sessions.clear()
+            raise
+
+        self.recorders = started_recorders
+        self.sessions = {session.source_id: session for session in sessions}
+        return sessions
+
+    def stop(self) -> None:
+        for recorder in list(self.recorders.values()):
+            recorder.stop()
+        self.recorders.clear()
+        self.sessions.clear()
+
+
+def _safe_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    cleaned = cleaned.strip("._-")
+    return cleaned[:40] or "camera"

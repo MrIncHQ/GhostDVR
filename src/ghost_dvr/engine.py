@@ -10,7 +10,7 @@ from ghost_dvr.hardware.led import LedState, StatusLed, create_status_led
 from ghost_dvr.hardware.profile import HardwareProfile, detect_hardware_profile
 from ghost_dvr.identity import DeviceIdentity
 from ghost_dvr.metadata import RecordingMetadataStore
-from ghost_dvr.recording import FfmpegRecorder
+from ghost_dvr.recording import FfmpegRecorder, RecordingSession
 from ghost_dvr.secrets import redact_url_credentials
 from ghost_dvr.source_validator import (
     FfprobeSourceValidator,
@@ -72,8 +72,8 @@ class DvrEngine:
             warning_percent=int(recording_config.get("storage_warning_percent", 10)),
         )
         self.metadata_store = metadata_store or RecordingMetadataStore()
-        self.active_metadata_path: Path | None = None
-        self.active_source_id: str | None = None
+        self.active_metadata_paths: dict[str, Path] = {}
+        self.active_source_ids: list[str] = []
         self.recording_requested = False
         time_config = config.get("time", {})
         self.clock = clock or LocalClock(str(time_config.get("timezone", "local")))
@@ -96,6 +96,14 @@ class DvrEngine:
         close_led = getattr(self.status_led, "close", None)
         if callable(close_led):
             close_led()
+
+    @property
+    def active_metadata_path(self) -> Path | None:
+        return next(iter(self.active_metadata_paths.values()), None)
+
+    @property
+    def active_source_id(self) -> str | None:
+        return self.active_source_ids[0] if self.active_source_ids else None
 
     def replace_sources(self, source_configs: list[dict[str, Any]]) -> None:
         if self.recorder.is_recording():
@@ -160,19 +168,23 @@ class DvrEngine:
 
     def start_recording(self, source_id: str | None = None) -> dict[str, Any]:
         statuses = self.refresh_sources()
-        source = self._select_recording_source(statuses, source_id)
-        validation_error = self._validate_source_for_recording(source.source_id)
-        if validation_error:
-            raise RuntimeError(validation_error)
-        session = self.recorder.start(source)
+        sources = self._select_recording_sources(statuses, source_id)
+        for source in sources:
+            validation_error = self._validate_source_for_recording(source.source_id)
+            if validation_error:
+                raise RuntimeError(f"{source.name}: {validation_error}")
+        sessions = self._start_recorder(sources)
         self.recording_requested = True
-        self.active_source_id = source.source_id
-        self.active_metadata_path = self.metadata_store.create(
-            identity=self.identity,
-            source=source,
-            session=session,
-        )
-        self.logger.info("Recording Started: %s", session.output_pattern)
+        self.active_source_ids = [source.source_id for source in sources]
+        self.active_metadata_paths = {}
+        sources_by_id = {source.source_id: source for source in sources}
+        for session in sessions:
+            self.active_metadata_paths[session.source_id] = self.metadata_store.create(
+                identity=self.identity,
+                source=sources_by_id[session.source_id],
+                session=session,
+            )
+            self.logger.info("Recording Started: %s", session.output_pattern)
         return self.snapshot()
 
     def stop_recording(self) -> dict[str, Any]:
@@ -184,22 +196,22 @@ class DvrEngine:
         if self.recording_requested and not self.recorder.is_recording():
             self.logger.error("Recording Process Failure")
             self._finish_active_metadata()
-            source_id = self.active_source_id
+            source_ids = list(self.active_source_ids)
             self.recording_requested = False
-            self.active_source_id = None
+            self.active_source_ids = []
             if self.config.get("recording", {}).get("auto_reconnect", True):
                 self.logger.info("Attempting Recording Recovery")
                 try:
-                    return self.start_recording(source_id)
+                    return self.start_recording(source_ids[0] if len(source_ids) == 1 else None)
                 except Exception as exc:
                     self.logger.error("Recording Recovery Failed: %s", exc)
         return self.snapshot()
 
-    def _select_recording_source(
+    def _select_recording_sources(
         self,
         statuses: list[SourceStatus],
         source_id: str | None,
-    ) -> SourceStatus:
+    ) -> list[SourceStatus]:
         candidates = [
             status
             for status in statuses
@@ -207,7 +219,15 @@ class DvrEngine:
         ]
         if not candidates:
             raise RuntimeError("No online source is available for recording")
-        return candidates[0]
+        return candidates
+
+    def _start_recorder(self, sources: list[SourceStatus]) -> list[RecordingSession]:
+        start_many = getattr(self.recorder, "start_many", None)
+        if callable(start_many):
+            return list(start_many(sources))
+        if len(sources) > 1:
+            raise RuntimeError("Recorder does not support multiple cameras")
+        return [self.recorder.start(sources[0])]
 
     def _validate_source_for_recording(self, source_id: str) -> str | None:
         for source in self.sources:
@@ -222,13 +242,18 @@ class DvrEngine:
         return None
 
     def _finish_active_metadata(self) -> None:
-        session = self.recorder.session
-        if self.active_metadata_path and session:
-            self.metadata_store.finish(
-                path=self.active_metadata_path,
-                started_at=session.started_at,
-            )
-            self.active_metadata_path = None
+        sessions_by_id = getattr(self.recorder, "sessions", None)
+        if isinstance(sessions_by_id, dict):
+            sessions = sessions_by_id
+        else:
+            session = self.recorder.session
+            sessions = {session.source_id: session} if session else {}
+
+        for source_id, path in list(self.active_metadata_paths.items()):
+            session = sessions.get(source_id)
+            if session:
+                self.metadata_store.finish(path=path, started_at=session.started_at)
+            self.active_metadata_paths.pop(source_id, None)
 
     def _stop_active_recording(self, log_message: str) -> None:
         was_recording = self.recorder.is_recording()
@@ -236,7 +261,7 @@ class DvrEngine:
             self._finish_active_metadata()
         self.recorder.stop()
         if was_recording:
-            self.active_source_id = None
+            self.active_source_ids = []
             self.logger.info(log_message)
 
     def _apply_recording_limits(self, storage_status) -> None:
@@ -261,8 +286,14 @@ class DvrEngine:
             )
 
     def recording_duration_seconds(self) -> int:
+        if not self.recorder.is_recording():
+            return 0
+        sessions_by_id = getattr(self.recorder, "sessions", None)
+        if isinstance(sessions_by_id, dict) and sessions_by_id:
+            started_at = min(session.started_at for session in sessions_by_id.values())
+            return max(0, int((self.clock.now() - started_at).total_seconds()))
         session = self.recorder.session
-        if not self.recorder.is_recording() or session is None:
+        if session is None:
             return 0
         return max(0, int((self.clock.now() - session.started_at).total_seconds()))
 

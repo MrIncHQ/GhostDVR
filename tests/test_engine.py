@@ -192,6 +192,54 @@ class EngineTests(unittest.TestCase):
             self.assertIsNone(engine.active_metadata_path)
             self.assertEqual(stopped["recording_duration_seconds"], 0)
 
+    def test_start_recording_records_all_online_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FakeMultiRecorder(Path(temp_dir))
+            engine = DvrEngine(
+                identity=DeviceIdentity(
+                    uuid="00000000-0000-0000-0000-000000000000",
+                    device_id="TEST",
+                    hostname="ghostdvr-test",
+                ),
+                config={"sources": [], "recording": {"segment_minutes": 15}},
+                status_file=Path(temp_dir) / "status.json",
+                logger=logging.getLogger("test.engine.multi-recording"),
+                sources=[
+                    MockVideoSource(
+                        SourceConfig(
+                            source_id="source-1",
+                            name="Back PTZ",
+                            source_type="mock",
+                            address="test_video.mp4",
+                        )
+                    ),
+                    MockVideoSource(
+                        SourceConfig(
+                            source_id="source-2",
+                            name="Driveway",
+                            source_type="mock",
+                            address="test_video.mp4",
+                        )
+                    ),
+                ],
+                recorder=recorder,
+                storage_monitor=FakeStorageMonitor(),
+                status_led=FakeStatusLed(),
+                recording_source_validator=FakeSourceValidator(),
+            )
+
+            started = engine.start_recording()
+
+            self.assertTrue(started["recording"])
+            self.assertEqual(recorder.started_source_ids, ["source-1", "source-2"])
+            self.assertEqual(engine.active_source_ids, ["source-1", "source-2"])
+            self.assertEqual(set(engine.active_metadata_paths), {"source-1", "source-2"})
+
+            engine.stop_recording()
+
+            self.assertEqual(recorder.stop_count, 1)
+            self.assertEqual(engine.active_metadata_paths, {})
+
     def test_recording_duration_uses_active_session_start_time(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             recorder = FakeRecorder(Path(temp_dir))
@@ -450,6 +498,33 @@ class FakeRecorder:
     def stop(self) -> None:
         self.stop_count += 1
         self.recording = False
+
+
+class FakeMultiRecorder(FakeRecorder):
+    def __init__(self, output_dir: Path) -> None:
+        super().__init__(output_dir)
+        self.started_source_ids: list[str] = []
+        self.sessions: dict[str, RecordingSession] = {}
+
+    def start_many(self, sources):
+        self.recording = True
+        self.start_count += 1
+        self.started_source_ids = [source.source_id for source in sources]
+        now = __import__("datetime").datetime.now().astimezone()
+        self.sessions = {
+            source.source_id: RecordingSession(
+                source_id=source.source_id,
+                output_pattern=self.output_dir / f"{source.source_id}_%03d.mp4",
+                started_at=now,
+            )
+            for source in sources
+        }
+        self.session = next(iter(self.sessions.values()), None)
+        return list(self.sessions.values())
+
+    def stop(self) -> None:
+        super().stop()
+        self.sessions = {}
 
 
 class FakeStorageMonitor:
