@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ghost_dvr.api import GhostDvrApiServer
+from ghost_dvr.api import GhostDvrApiServer, _device_power_command
 from ghost_dvr.discovery import DiscoveredCamera
 from ghost_dvr.preview import PreviewResult
 from ghost_dvr.updater import UpdateStatus
@@ -149,6 +149,36 @@ class ApiTests(unittest.TestCase):
 
                 self.assertEqual(response["sources"][0]["source_type"], "usb")
                 self.assertEqual(engine.replaced_sources[0]["address"], "video=Integrated Camera")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_config_sources_save_accepts_empty_sources_for_api_first_setup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _api_config()
+            config_file = Path(temp_dir) / "config.json"
+            engine = FakeApiEngine()
+            server = GhostDvrApiServer(
+                engine=engine,
+                events_log=Path(temp_dir) / "events.log",
+                config=config,
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request(
+                    "POST",
+                    port,
+                    "/config/sources",
+                    body={"sources": []},
+                )
+
+                self.assertEqual(response["sources"], [])
+                self.assertEqual(config["sources"], [])
+                self.assertEqual(engine.replaced_sources, [])
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -315,6 +345,66 @@ class ApiTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
+    def test_startup_api_status_endpoint_reports_autostart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_file = Path(temp_dir) / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api.api_autostart_status") as status:
+                    status.return_value.to_dict.return_value = {
+                        "supported": True,
+                        "enabled": False,
+                        "method": "systemd-user",
+                        "target": "service",
+                        "message": "",
+                    }
+                    response = _request("GET", port, "/startup/api")
+
+                self.assertFalse(response["enabled"])
+                status.assert_called_once_with(Path(temp_dir).resolve())
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_startup_api_save_endpoint_updates_autostart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_file = Path(temp_dir) / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api.set_api_autostart") as autostart:
+                    autostart.return_value.to_dict.return_value = {
+                        "supported": True,
+                        "enabled": True,
+                        "method": "systemd-user",
+                        "target": "service",
+                        "message": "",
+                    }
+                    response = _request("POST", port, "/startup/api", body={"enabled": True})
+
+                self.assertTrue(response["enabled"])
+                autostart.assert_called_once_with(Path(temp_dir).resolve(), enabled=True)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
     def test_update_status_endpoint_reports_version_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             server = GhostDvrApiServer(
@@ -378,6 +468,55 @@ class ApiTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
+
+    def test_device_restart_endpoint_schedules_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api._schedule_device_power") as schedule:
+                    response = _request("POST", port, "/device/restart")
+
+                schedule.assert_called_once_with("restart", delay_seconds=1.0)
+                self.assertTrue(response["ok"])
+                self.assertEqual(response["action"], "restart")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_device_shutdown_endpoint_is_blocked_while_recording(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(recording=True),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api._schedule_device_power") as schedule:
+                    response = _request("POST", port, "/device/shutdown")
+
+                schedule.assert_not_called()
+                self.assertIn("Stop recording", response["error"])
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_device_power_command_uses_platform_commands(self):
+        with patch("platform.system", return_value="Windows"):
+            self.assertEqual(_device_power_command("shutdown"), ["shutdown", "/s", "/t", "5"])
+            self.assertEqual(_device_power_command("restart"), ["shutdown", "/r", "/t", "5"])
+        with patch("platform.system", return_value="Linux"):
+            self.assertEqual(_device_power_command("shutdown"), ["systemctl", "poweroff"])
+            self.assertEqual(_device_power_command("restart"), ["systemctl", "reboot"])
 
     def test_discover_cameras_endpoint_returns_discovered_cameras(self):
         with tempfile.TemporaryDirectory() as temp_dir:

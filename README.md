@@ -32,7 +32,9 @@ Run_Ghost_DVR_Setup_Pi.sh
 
 This is optional if you plan to use the browser dashboard. The web dashboard has
 a Cameras tab where you can add, remove, test, discover, and save cameras after
-the API is running.
+the API is running. For API-only setup, start `Run_Ghost_DVR_API_Pi.sh`, open the
+dashboard, then use **Discover Cameras** or **+ Add Camera** to add the first
+camera.
 
 The setup launcher is still useful for local-only installs, quick first camera
 setup, or systems where you do not want to use the browser dashboard.
@@ -122,6 +124,13 @@ The Status tab shows the current version. Use **Check Updates** to check
 immediately; if an update is found, Ghost DVR can apply it from that same prompt.
 Stop recording before updating. Ghost DVR restarts itself after an update is
 applied when it is started from the included launcher.
+
+The Status tab can also restart or shut down the device running Ghost DVR.
+Stop recording before using either power action.
+
+The Status tab also has a **Start web dashboard on device boot** toggle. Enable
+it if you want the API/web dashboard to come back automatically after the Pi or
+PC reboots.
 
 The Recordings tab lets you choose how long a recording session runs: 15, 25,
 30, 40, 60 minutes, or infinite. Infinite keeps recording until you stop it or

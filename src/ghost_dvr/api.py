@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import platform
 import subprocess
+import threading
 import time
 import uuid
 from http import HTTPStatus
@@ -10,6 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from ghost_dvr.autostart import api_autostart_status, set_api_autostart
 from ghost_dvr.config import save_config
 from ghost_dvr.discovery import discover_onvif_cameras
 from ghost_dvr.engine import DvrEngine
@@ -97,6 +100,9 @@ class GhostDvrApiServer:
                     return
                 if parsed_path.path == "/system":
                     self._send_json(system_metrics())
+                    return
+                if parsed_path.path == "/startup/api":
+                    self._send_json(api_autostart_status(_app_root(config_file)).to_dict())
                     return
                 if parsed_path.path == "/update/status":
                     query = parse_qs(parsed_path.query)
@@ -186,6 +192,9 @@ class GhostDvrApiServer:
                         recordings_dir,
                     )
                     return
+                if parsed_path.path == "/startup/api":
+                    self._handle_api_autostart(config_file)
+                    return
                 if parsed_path.path == "/update/run":
                     if engine.recorder.is_recording():
                         self._send_json(
@@ -201,6 +210,12 @@ class GhostDvrApiServer:
                     if update_applied(update_status):
                         restart_current_process(delay_seconds=1.0)
                     return
+                if parsed_path.path == "/device/shutdown":
+                    self._handle_device_power(engine, "shutdown")
+                    return
+                if parsed_path.path == "/device/restart":
+                    self._handle_device_power(engine, "restart")
+                    return
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
             def log_message(self, format: str, *args: Any) -> None:
@@ -214,6 +229,28 @@ class GhostDvrApiServer:
                         {"error": str(exc)},
                         HTTPStatus.INTERNAL_SERVER_ERROR,
                     )
+
+            def _handle_device_power(self, engine: DvrEngine, action: str) -> None:
+                if engine.recorder.is_recording():
+                    self._send_json(
+                        {"error": f"Stop recording before device {action}"},
+                        HTTPStatus.CONFLICT,
+                    )
+                    return
+                try:
+                    logger = getattr(engine, "logger", None)
+                    if logger:
+                        logger.warning("Device %s requested from web dashboard", action)
+                    _schedule_device_power(action, delay_seconds=1.0)
+                    self._send_json(
+                        {
+                            "ok": True,
+                            "action": action,
+                            "message": f"Device {action} scheduled.",
+                        }
+                    )
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
             def _send_json(
                 self,
@@ -376,6 +413,17 @@ class GhostDvrApiServer:
                     self._send_json(_storage_config_payload(config, engine, fallback_recordings_dir))
                 except Exception as exc:
                     self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+            def _handle_api_autostart(self, config_file: Path | None) -> None:
+                try:
+                    payload = self._read_json_body()
+                    status = set_api_autostart(
+                        _app_root(config_file),
+                        enabled=bool(payload.get("enabled", False)),
+                    )
+                    self._send_json(status.to_dict())
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
             def _send_recording_download(
                 self,
@@ -685,8 +733,6 @@ def _normalize_source_configs(
         _normalize_single_source(source, existing_sources=existing_sources, index=index)
         for index, source in enumerate(sources)
     ]
-    if not normalized:
-        raise ValueError("At least one camera source is required")
     return normalized
 
 
@@ -770,6 +816,40 @@ def _read_events(path: Path, limit: int = 100) -> list[str]:
         return []
     lines = path.read_text(encoding="utf-8").splitlines()
     return lines[-limit:]
+
+
+def _app_root(config_file: Path | None) -> Path:
+    if config_file is not None:
+        return config_file.parent.parent.resolve()
+    return Path.cwd().resolve()
+
+
+def _schedule_device_power(action: str, delay_seconds: float = 1.0) -> list[str]:
+    command = _device_power_command(action)
+
+    def run_command() -> None:
+        subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    timer = threading.Timer(delay_seconds, run_command)
+    timer.daemon = True
+    timer.start()
+    return command
+
+
+def _device_power_command(action: str) -> list[str]:
+    system = platform.system().lower()
+    if action not in {"shutdown", "restart"}:
+        raise ValueError(f"Unsupported device power action: {action}")
+
+    if system == "windows":
+        return ["shutdown", "/s" if action == "shutdown" else "/r", "/t", "5"]
+    if system == "linux":
+        return ["systemctl", "poweroff" if action == "shutdown" else "reboot"]
+    return ["shutdown", "-h" if action == "shutdown" else "-r", "now"]
 
 
 def _web_page() -> str:
@@ -1079,6 +1159,25 @@ def _web_page() -> str:
       align-items: end;
       margin: 12px 0;
     }
+    .power-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .power-row button {
+      margin: 0;
+    }
+    .inline-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .inline-toggle input {
+      width: auto;
+      min-height: auto;
+    }
   </style>
 </head>
 <body>
@@ -1223,6 +1322,18 @@ def _web_page() -> str:
         </div>
         <div id="updateMessage" class="message"></div>
       </section>
+      <section class="panel">
+        <h3>Device Power</h3>
+        <label class="inline-toggle">
+          <input id="apiAutostartToggle" type="checkbox">
+          <span>Start web dashboard on device boot</span>
+        </label>
+        <div class="power-row">
+          <button id="restartDeviceButton" type="button" class="secondary">Restart Device</button>
+          <button id="shutdownDeviceButton" type="button" class="danger">Shutdown Device</button>
+        </div>
+        <div id="powerMessage" class="message"></div>
+      </section>
       <h2>Status Log</h2>
       <pre id="events"></pre>
     </section>
@@ -1264,6 +1375,7 @@ def _web_page() -> str:
       const status = await requestJson('/status');
       const system = await requestJson('/system');
       const updateStatus = await requestJson('/update/status');
+      const apiAutostart = await requestJson('/startup/api');
       const sourceConfig = await requestJson('/config/sources');
       const recordingConfig = await requestJson('/config/recording');
       const storageConfig = await requestJson('/config/storage');
@@ -1290,6 +1402,7 @@ def _web_page() -> str:
         : `${system.temperature_c} C`;
       document.getElementById('uptime').textContent = formatUptime(system.uptime_seconds);
       renderUpdateStatus(updateStatus);
+      renderApiAutostart(apiAutostart);
       document.getElementById('profile').textContent = sourceConfig.hardware_profile?.name || '-';
       document.getElementById('recommendedSources').textContent = sourceConfig.recommended_sources || '-';
       if (!sourceConfigLoaded) {
@@ -1316,8 +1429,8 @@ def _web_page() -> str:
       if (!sources.length) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
-        cell.colSpan = 7;
-        cell.textContent = 'No cameras configured';
+        cell.colSpan = 6;
+        cell.textContent = 'No cameras configured. Use Discover Cameras or + Add Camera to add the first one.';
         row.appendChild(cell);
         tbody.appendChild(row);
         return;
@@ -1399,7 +1512,10 @@ def _web_page() -> str:
       renderSourceConfig(sourceConfigs);
       renderPreviewSlots(sourceConfigs);
       sourceConfigLoaded = true;
-      setConfigMessage('Camera settings saved. Recording must be stopped before changes are allowed.');
+      setConfigMessage(sourceConfigs.length
+        ? 'Camera settings saved. Recording must be stopped before changes are allowed.'
+        : 'No cameras are configured. Use Discover Cameras or + Add Camera to add one.'
+      );
     }
 
     async function discoverCameras() {
@@ -1664,6 +1780,47 @@ def _web_page() -> str:
       document.getElementById('updateMessage').textContent = message;
     }
 
+    function renderApiAutostart(status) {
+      const toggle = document.getElementById('apiAutostartToggle');
+      toggle.checked = Boolean(status.enabled);
+      toggle.disabled = !status.supported;
+      if (!status.supported && status.message) {
+        setPowerMessage(status.message);
+      }
+    }
+
+    async function saveApiAutostart(enabled) {
+      setPowerMessage(enabled ? 'Enabling API autostart...' : 'Disabling API autostart...');
+      const status = await requestJson('/startup/api', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled })
+      });
+      renderApiAutostart(status);
+      const state = status.enabled ? 'enabled' : 'disabled';
+      setPowerMessage(`Web dashboard autostart ${state}.`);
+    }
+
+    async function requestDevicePower(action) {
+      if (isRecording) {
+        setPowerMessage(`Stop recording before device ${action}.`);
+        return;
+      }
+      const label = action === 'shutdown' ? 'shut down' : 'restart';
+      if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} this device? The web panel will disconnect.`)) {
+        return;
+      }
+      setPowerMessage(`Scheduling device ${action}...`);
+      const result = await requestJson(`/device/${action}`, { method: 'POST' });
+      setPowerMessage(result.message || `Device ${action} scheduled.`);
+    }
+
+    function setPowerMessage(message) {
+      document.getElementById('powerMessage').textContent = message;
+    }
+
     async function saveStorageConfig() {
       setStorageConfigMessage('Saving storage settings...');
       const response = await requestJson('/config/storage', {
@@ -1799,6 +1956,31 @@ def _web_page() -> str:
         await checkUpdates();
       } catch (error) {
         setUpdateMessage(`Update check failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('apiAutostartToggle').addEventListener('change', async event => {
+      try {
+        await saveApiAutostart(event.target.checked);
+      } catch (error) {
+        event.target.checked = !event.target.checked;
+        setPowerMessage(`Autostart change failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('restartDeviceButton').addEventListener('click', async () => {
+      try {
+        await requestDevicePower('restart');
+      } catch (error) {
+        setPowerMessage(`Restart failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('shutdownDeviceButton').addEventListener('click', async () => {
+      try {
+        await requestDevicePower('shutdown');
+      } catch (error) {
+        setPowerMessage(`Shutdown failed: ${error.message}`);
       }
     });
 
