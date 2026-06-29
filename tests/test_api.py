@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ghost_dvr.api import GhostDvrApiServer
+from ghost_dvr.discovery import DiscoveredCamera
 from ghost_dvr.preview import PreviewResult
 from ghost_dvr.updater import UpdateStatus
 
@@ -374,6 +375,34 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(response["message"], "Update applied. Restarting Ghost DVR.")
                 update.assert_called_once()
                 restart.assert_called_once()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_discover_cameras_endpoint_returns_discovered_cameras(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                with patch("ghost_dvr.api.discover_onvif_cameras") as discover:
+                    discover.return_value = [
+                        DiscoveredCamera(
+                            name="Back PTZ",
+                            host="192.168.0.56",
+                            xaddrs=["http://192.168.0.56/onvif/device_service"],
+                            rtsp_suggestions=["rtsp://192.168.0.56:554/h264Preview_01_sub"],
+                        )
+                    ]
+                    response = _request("GET", port, "/discover/cameras")
+
+                self.assertEqual(response["cameras"][0]["name"], "Back PTZ")
+                self.assertEqual(response["cameras"][0]["host"], "192.168.0.56")
             finally:
                 server.shutdown()
                 thread.join(timeout=5)

@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ghost_dvr.config import save_config
+from ghost_dvr.discovery import discover_onvif_cameras
 from ghost_dvr.engine import DvrEngine
 from ghost_dvr.ffmpeg import find_ffmpeg
 from ghost_dvr.preview import PreviewFrameGrabber
@@ -106,6 +107,16 @@ class GhostDvrApiServer:
                 if parsed_path.path == "/sources":
                     self._send_json(
                         [source.to_dict() for source in engine.refresh_sources()]
+                    )
+                    return
+                if parsed_path.path == "/discover/cameras":
+                    self._send_json(
+                        {
+                            "cameras": [
+                                camera.to_dict()
+                                for camera in discover_onvif_cameras(timeout_seconds=3.0)
+                            ]
+                        }
                     )
                     return
                 if parsed_path.path == "/config/sources":
@@ -1028,6 +1039,26 @@ def _web_page() -> str:
       min-height: 36px;
       margin: 0;
     }
+    .discovery-list {
+      display: grid;
+      gap: 10px;
+      margin: 12px 0 0;
+    }
+    .discovery-item {
+      display: grid;
+      grid-template-columns: minmax(160px, 1fr) minmax(260px, 2fr) minmax(120px, auto);
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      background: var(--input-readonly-bg);
+    }
+    .discovery-address {
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-size: 13px;
+    }
     .camera-table td {
       vertical-align: top;
     }
@@ -1085,6 +1116,14 @@ def _web_page() -> str:
           <div class="panel"><div class="label">Recommended Cameras</div><div id="recommendedSources" class="value">-</div></div>
         </div>
         <p class="message">Camera changes apply to this local Ghost DVR dashboard.</p>
+        <section class="panel">
+          <h3>Camera Discovery</h3>
+          <div class="actions">
+            <button id="discoverCamerasButton" type="button" class="secondary">Discover Cameras</button>
+          </div>
+          <div id="discoveryMessage" class="message"></div>
+          <div id="discoveryResults" class="discovery-list"></div>
+        </section>
         <table class="camera-table">
           <thead>
             <tr>
@@ -1361,6 +1400,61 @@ def _web_page() -> str:
       renderPreviewSlots(sourceConfigs);
       sourceConfigLoaded = true;
       setConfigMessage('Camera settings saved. Recording must be stopped before changes are allowed.');
+    }
+
+    async function discoverCameras() {
+      setDiscoveryMessage('Searching for ONVIF cameras...');
+      const result = await requestJson('/discover/cameras');
+      renderDiscoveryResults(result.cameras || []);
+    }
+
+    function renderDiscoveryResults(cameras) {
+      const results = document.getElementById('discoveryResults');
+      results.replaceChildren();
+      if (!cameras.length) {
+        setDiscoveryMessage('No ONVIF cameras found.');
+        return;
+      }
+        setDiscoveryMessage(`Found ${cameras.length} camera(s). Click Add to place one in the edit list.`);
+      for (const camera of cameras) {
+        const item = document.createElement('div');
+        item.className = 'discovery-item';
+        const title = document.createElement('div');
+        title.innerHTML = `<strong>${camera.name || 'Camera'}</strong><div class="discovery-address">${camera.host || ''}</div>`;
+        const select = document.createElement('select');
+        for (const address of camera.rtsp_suggestions || []) {
+          const option = document.createElement('option');
+          option.value = address;
+          option.textContent = address;
+          select.appendChild(option);
+        }
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'secondary';
+        add.textContent = 'Add to List';
+        add.addEventListener('click', () => addDiscoveredCamera(camera, select.value));
+        item.appendChild(title);
+        item.appendChild(select);
+        item.appendChild(add);
+        results.appendChild(item);
+      }
+    }
+
+    function addDiscoveredCamera(camera, address) {
+      sourceConfigs.push({
+        source_id: '',
+        name: camera.name || `Camera ${sourceConfigs.length + 1}`,
+        source_type: 'rtsp',
+        address: address || '',
+        username: '',
+        has_password: false
+      });
+      renderSourceConfig(sourceConfigs);
+      setConfigMessage('Discovered camera added to the edit list. Add username/password if needed, then Save Cameras.');
+    }
+
+    function setDiscoveryMessage(message) {
+      document.getElementById('discoveryMessage').textContent = message;
     }
 
     function renderPreviewSlots(sources) {
@@ -1693,6 +1787,14 @@ def _web_page() -> str:
         has_password: false
       });
       renderSourceConfig(sourceConfigs);
+    });
+
+    document.getElementById('discoverCamerasButton').addEventListener('click', async () => {
+      try {
+        await discoverCameras();
+      } catch (error) {
+        setDiscoveryMessage(`Discovery failed: ${error.message}`);
+      }
     });
 
     document.getElementById('saveSourcesButton').addEventListener('click', async () => {

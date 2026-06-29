@@ -99,6 +99,10 @@ load, edit camera settings, and delete completed recordings. The dashboard is
 intended for a trusted local network only. Do not port-forward it or expose it
 directly to the internet.
 
+The Cameras tab can discover ONVIF cameras on the local network and suggest
+common RTSP URLs. Some cameras still require entering the correct username,
+password, or vendor-specific stream path before saving.
+
 Recording downloads offer the original MKV and an MP4 export. Use MKV for the
 original field recording. Use MP4 when a Windows player has trouble opening the
 MKV file.
