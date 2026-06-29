@@ -84,7 +84,7 @@ class UpdaterTests(unittest.TestCase):
                     _git_result("main\n"),
                     _git_result("origin/main\n"),
                     _git_result("1\n"),
-                    _git_result(" M Run_Ghost_DVR_API_Pi.sh\n"),
+                    _git_result(" M Run_Ghost_DVR_API_Pi.sh\n M Run_Ghost_DVR_Setup_Pi.sh\n"),
                     _git_result(""),
                     _git_result("Updating\n"),
                     _git_result("def456\n"),
@@ -97,7 +97,13 @@ class UpdaterTests(unittest.TestCase):
 
             self.assertTrue(update_applied(status))
             self.assertIn(
-                ["git", "restore", "--", "Run_Ghost_DVR_API_Pi.sh"],
+                [
+                    "git",
+                    "restore",
+                    "--",
+                    "Run_Ghost_DVR_API_Pi.sh",
+                    "Run_Ghost_DVR_Setup_Pi.sh",
+                ],
                 [call.args[0] for call in run.call_args_list],
             )
 

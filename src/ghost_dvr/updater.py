@@ -15,8 +15,10 @@ RESTART_EXIT_CODE = 75
 AUTO_RESTORE_UPDATE_FILES = {
     "Run_Ghost_DVR.bat",
     "Run_Ghost_DVR_API.bat",
+    "Run_Ghost_DVR_Setup.bat",
     "Run_Ghost_DVR_Pi.sh",
     "Run_Ghost_DVR_API_Pi.sh",
+    "Run_Ghost_DVR_Setup_Pi.sh",
 }
 
 
