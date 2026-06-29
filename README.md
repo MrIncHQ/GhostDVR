@@ -98,8 +98,8 @@ load, edit camera settings, and delete completed recordings. The dashboard is
 intended for a trusted local network only. Do not port-forward it or expose it
 directly to the internet.
 
-The dashboard shows the current version and checks for updates every few hours.
-Use **Check Updates** to check immediately, or **Update** to pull the latest code.
+The Status tab shows the current version. Use **Check Updates** to check
+immediately; if an update is found, Ghost DVR can apply it from that same prompt.
 Stop recording before updating, then restart Ghost DVR after the update finishes.
 
 The Recordings tab lets you choose how long a recording session runs: 15, 25,

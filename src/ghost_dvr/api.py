@@ -895,6 +895,13 @@ def _web_page() -> str:
     .settings-row button {
       width: 100%;
     }
+    .update-row {
+      display: grid;
+      grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(160px, auto);
+      gap: 12px;
+      align-items: end;
+      margin: 12px 0;
+    }
   </style>
 </head>
 <body>
@@ -912,6 +919,7 @@ def _web_page() -> str:
       <button class="tab-button" type="button" data-tab="status">Status</button>
     </nav>
     <section id="dashboardTab" class="tab-panel">
+      <section class="preview-grid" id="previewGrid"></section>
       <section class="grid">
         <div class="panel"><div class="label">Device ID</div><div id="device" class="value">-</div></div>
         <div class="panel"><div class="label">Source</div><div id="source" class="value">-</div></div>
@@ -922,24 +930,6 @@ def _web_page() -> str:
         <div class="panel"><div class="label">Temperature</div><div id="temperature" class="value">-</div></div>
         <div class="panel"><div class="label">Uptime</div><div id="uptime" class="value">-</div></div>
       </section>
-      <section class="panel">
-        <h3>Updates</h3>
-        <div class="settings-row">
-          <div>
-            <div class="label">Version</div>
-            <div id="updateVersion" class="value">-</div>
-          </div>
-          <div>
-            <div class="label">Update Status</div>
-            <div id="updateStatus" class="value">Checking...</div>
-          </div>
-          <button id="checkUpdateButton" type="button" class="secondary">Check Updates</button>
-          <button id="runUpdateButton" type="button">Update</button>
-        </div>
-        <p class="message">Ghost DVR checks for updates every few hours. Restart after an update finishes.</p>
-        <div id="updateMessage" class="message"></div>
-      </section>
-      <section class="preview-grid" id="previewGrid"></section>
     </section>
     <section id="camerasTab" class="tab-panel" hidden>
         <h2>Cameras</h2>
@@ -1030,6 +1020,22 @@ def _web_page() -> str:
       </table>
     </section>
     <section id="statusTab" class="tab-panel" hidden>
+      <h2>Status</h2>
+      <section class="panel">
+        <h3>Updates</h3>
+        <div class="update-row">
+          <div>
+            <div class="label">Version</div>
+            <div id="updateVersion" class="value">-</div>
+          </div>
+          <div>
+            <div class="label">Update Status</div>
+            <div id="updateStatus" class="value">Checking...</div>
+          </div>
+          <button id="checkUpdateButton" type="button">Check Updates</button>
+        </div>
+        <div id="updateMessage" class="message"></div>
+      </section>
       <h2>Status Log</h2>
       <pre id="events"></pre>
     </section>
@@ -1322,13 +1328,25 @@ def _web_page() -> str:
       document.getElementById('updateStatus').textContent = status.update_available
         ? 'Out of date'
         : 'Current';
-      document.getElementById('updateMessage').textContent = status.message || '';
     }
 
     async function checkUpdates() {
       setUpdateMessage('Checking for updates...');
       const status = await requestJson('/update/status?force=1');
       renderUpdateStatus(status);
+      if (!status.update_available) {
+        setUpdateMessage('');
+        return;
+      }
+      if (isRecording) {
+        setUpdateMessage('Update found. Stop recording before updating.');
+        return;
+      }
+      if (!confirm('Update found. Update Ghost DVR now? Restart after the update finishes.')) {
+        setUpdateMessage('Update available.');
+        return;
+      }
+      await runUpdate();
     }
 
     async function runUpdate() {
@@ -1336,10 +1354,10 @@ def _web_page() -> str:
         setUpdateMessage('Stop recording before updating Ghost DVR.');
         return;
       }
-      if (!confirm('Update Ghost DVR now? Restart after the update finishes.')) return;
       setUpdateMessage('Updating Ghost DVR...');
       const status = await requestJson('/update/run', { method: 'POST' });
       renderUpdateStatus(status);
+      setUpdateMessage(status.message || 'Update finished. Restart Ghost DVR.');
     }
 
     function setUpdateMessage(message) {
@@ -1479,14 +1497,6 @@ def _web_page() -> str:
         await checkUpdates();
       } catch (error) {
         setUpdateMessage(`Update check failed: ${error.message}`);
-      }
-    });
-
-    document.getElementById('runUpdateButton').addEventListener('click', async () => {
-      try {
-        await runUpdate();
-      } catch (error) {
-        setUpdateMessage(`Update failed: ${error.message}`);
       }
     });
 
