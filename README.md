@@ -95,9 +95,9 @@ connect to it. If the browser says the connection was refused, make sure
 `Run_Ghost_DVR_API_Pi.sh` is still running on the Pi.
 
 The browser dashboard can view recordings, download recordings, show system
-load, edit camera settings, and delete completed recordings. The dashboard is
-intended for a trusted local network only. Do not port-forward it or expose it
-directly to the internet.
+load, edit camera settings, discover cameras, switch light/dark mode, and delete
+completed recordings. The dashboard is intended for a trusted local network
+only. Do not port-forward it or expose it directly to the internet.
 
 The Cameras tab can discover ONVIF cameras on the local network and suggest
 common RTSP URLs. Some cameras still require entering the correct username,
@@ -119,6 +119,15 @@ split into segment files while the session continues. The default segment length
 is 15 minutes and can be changed with `recording.segment_minutes` in
 `runtime/config.json`.
 
+When more than one camera is configured, **Start Recording** records every
+online camera. Each camera gets its own recording files with the camera name in
+the filename, for example:
+
+```text
+Back_PTZ_2026-06-28_19-22-02_000.mkv
+Driveway_2026-06-28_19-22-02_000.mkv
+```
+
 The Recordings tab also shows the active recording folder and lets you set a
 preferred save folder. Leave it blank to use the default `runtime/recordings`
 folder. Stop recording before changing the save folder.
@@ -133,16 +142,6 @@ curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh
 
 If Ghost DVR is already installed at `$HOME/GhostDVR`, the installer updates the
 Git checkout instead of replacing the runtime folder.
-
-If an update stops with a message like `local changes would be overwritten by
-merge`, restore the launcher file and pull again:
-
-```bash
-cd ~/GhostDVR
-git restore -- Run_Ghost_DVR_API_Pi.sh
-git pull
-chmod +x Run_Ghost_DVR_API_Pi.sh Run_Ghost_DVR_Pi.sh Run_Ghost_DVR_Setup_Pi.sh
-```
 
 The camera settings under `~/GhostDVR/runtime/` are ignored by Git and are not
 removed by this.

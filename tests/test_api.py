@@ -331,7 +331,7 @@ class ApiTests(unittest.TestCase):
                     response = _request("GET", port, "/update/status?force=1")
 
                 self.assertTrue(response["update_available"])
-                self.assertEqual(response["version"], "0.1.0")
+                self.assertEqual(response["version"], "0.2.0")
                 self.assertIn("Update available", response["message"])
             finally:
                 server.shutdown()
@@ -824,7 +824,7 @@ def _api_config():
 
 def _update_status(update_available=False, message="Update available"):
     return UpdateStatus(
-        version="0.1.0",
+        version="0.2.0",
         commit="abc123",
         branch="main",
         git_available=True,
