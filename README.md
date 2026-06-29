@@ -86,14 +86,16 @@ Desktop folder exists. If you are in a terminal, run the same files from
 `~/GhostDVR/`.
 
 The local window is intentionally lightweight. It can start and stop recording,
-show preview/status, and change only the recording time and save folder.
+show preview/status, and change only the recording time and save folder. Use it
+on Raspberry Pi OS with Desktop or on Windows when you want a local screen.
 It also shows the current version and has update controls. Stop recording before
 running an update. Ghost DVR restarts itself after an update is applied when it
 is started from the included launcher.
 
-For a headless Pi or browser-based control, run `Run_Ghost_DVR_API_Pi.sh`, then
-open this from another device on the same network. Replace `DEVICE_IP_ADDRESS`
-with the IP address of the Pi or PC running Ghost DVR:
+For Raspberry Pi OS Lite, terminal-only systems, or browser-based remote
+control, run `Run_Ghost_DVR_API_Pi.sh`, then open this from another device on
+the same network. Replace `DEVICE_IP_ADDRESS` with the IP address of the Pi or
+PC running Ghost DVR:
 
 ```text
 http://DEVICE_IP_ADDRESS:8080
