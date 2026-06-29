@@ -84,7 +84,7 @@ def _parse_probe_match(payload: bytes) -> DiscoveredCamera | None:
         name=name,
         host=host,
         xaddrs=xaddrs,
-        rtsp_suggestions=_rtsp_suggestions(host),
+        rtsp_suggestions=_rtsp_suggestions(host, name, scopes_text, xaddrs),
     )
 
 
@@ -112,9 +112,32 @@ def _name_from_scopes(scopes: str) -> str:
     return ""
 
 
-def _rtsp_suggestions(host: str) -> list[str]:
-    return [
-        f"rtsp://{host}:554/h264Preview_01_sub",
-        f"rtsp://{host}:554/h264Preview_01_main",
-        f"rtsp://{host}:554/stream1",
-    ]
+def _rtsp_suggestions(host: str, name: str = "", scopes: str = "", xaddrs: list[str] | None = None) -> list[str]:
+    fingerprint = " ".join([name, scopes, " ".join(xaddrs or [])]).lower()
+    suggestions: list[str] = []
+
+    if any(brand in fingerprint for brand in ["amcrest", "dahua"]):
+        suggestions.extend(
+            [
+                f"rtsp://{host}:554/cam/realmonitor?channel=1&subtype=1",
+                f"rtsp://{host}:554/cam/realmonitor?channel=1&subtype=0",
+            ]
+        )
+    elif "reolink" in fingerprint:
+        suggestions.extend(
+            [
+                f"rtsp://{host}:554/h264Preview_01_sub",
+                f"rtsp://{host}:554/h264Preview_01_main",
+            ]
+        )
+
+    suggestions.extend(
+        [
+            f"rtsp://{host}:554/cam/realmonitor?channel=1&subtype=1",
+            f"rtsp://{host}:554/cam/realmonitor?channel=1&subtype=0",
+            f"rtsp://{host}:554/h264Preview_01_sub",
+            f"rtsp://{host}:554/h264Preview_01_main",
+            f"rtsp://{host}:554/stream1",
+        ]
+    )
+    return list(dict.fromkeys(suggestions))

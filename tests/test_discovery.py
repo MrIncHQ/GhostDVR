@@ -30,6 +30,32 @@ class DiscoveryTests(unittest.TestCase):
     def test_parse_probe_match_ignores_invalid_xml(self):
         self.assertIsNone(_parse_probe_match(b"not xml"))
 
+    def test_parse_probe_match_prioritizes_amcrest_rtsp_suggestions(self):
+        payload = b"""<?xml version="1.0"?>
+        <Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+          <Body>
+            <ProbeMatches xmlns="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <ProbeMatch>
+                <Scopes>onvif://www.onvif.org/name/Amcrest%20Camera</Scopes>
+                <XAddrs>http://192.168.0.77/onvif/device_service</XAddrs>
+              </ProbeMatch>
+            </ProbeMatches>
+          </Body>
+        </Envelope>"""
+
+        camera = _parse_probe_match(payload)
+
+        self.assertIsNotNone(camera)
+        assert camera is not None
+        self.assertEqual(
+            camera.rtsp_suggestions[0],
+            "rtsp://192.168.0.77:554/cam/realmonitor?channel=1&subtype=1",
+        )
+        self.assertEqual(
+            camera.rtsp_suggestions[1],
+            "rtsp://192.168.0.77:554/cam/realmonitor?channel=1&subtype=0",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
