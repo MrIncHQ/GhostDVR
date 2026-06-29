@@ -23,11 +23,19 @@ The installer will:
 
 ## First Setup
 
-After install, run setup:
+After install, you can run the setup launcher to create the first local camera
+config:
 
-```bash
-~/GhostDVR/Run_Ghost_DVR_Setup_Pi.sh
+```text
+Run_Ghost_DVR_Setup_Pi.sh
 ```
+
+This is optional if you plan to use the browser dashboard. The web dashboard has
+a Cameras tab where you can add, remove, test, discover, and save cameras after
+the API is running.
+
+The setup launcher is still useful for local-only installs, quick first camera
+setup, or systems where you do not want to use the browser dashboard.
 
 For an RTSP camera, choose:
 
@@ -62,13 +70,20 @@ The app saves local settings under:
 Do not upload or share that folder. It can contain camera credentials,
 recordings, logs, and device identity.
 
-## Start Ghost DVR
+## Launch Ghost DVR
 
-For a Pi with a screen:
+Use the included launch files instead of typing Python commands. On Raspberry
+Pi, use:
 
-```bash
-~/GhostDVR/Run_Ghost_DVR_Pi.sh
+```text
+Run_Ghost_DVR_Pi.sh        local lightweight DVR window
+Run_Ghost_DVR_API_Pi.sh    web dashboard/API
+Run_Ghost_DVR_Setup_Pi.sh  optional first setup
 ```
+
+If the Pi has a desktop, the installer also creates desktop launchers when a
+Desktop folder exists. If you are in a terminal, run the same files from
+`~/GhostDVR/`.
 
 The local window is intentionally lightweight. It can start and stop recording,
 show preview/status, and change only the recording time and save folder.
@@ -76,19 +91,13 @@ It also shows the current version and has update controls. Stop recording before
 running an update. Ghost DVR restarts itself after an update is applied when it
 is started from the included launcher.
 
-For a headless Pi or browser-based control:
-
-```bash
-~/GhostDVR/Run_Ghost_DVR_API_Pi.sh
-```
-
-Then open this from another device on the same network:
+For a headless Pi or browser-based control, run `Run_Ghost_DVR_API_Pi.sh`, then
+open this from another device on the same network. Replace `DEVICE_IP_ADDRESS`
+with the IP address of the Pi or PC running Ghost DVR:
 
 ```text
-http://PI_IP_ADDRESS:8080
+http://DEVICE_IP_ADDRESS:8080
 ```
-
-Replace `PI_IP_ADDRESS` with the Pi's actual IP address.
 
 The API binds to `0.0.0.0` by default so other devices on your local network can
 connect to it. If the browser says the connection was refused, make sure
@@ -124,8 +133,8 @@ online camera. Each camera gets its own recording files with the camera name in
 the filename, for example:
 
 ```text
-Back_PTZ_2026-06-28_19-22-02_000.mkv
-Driveway_2026-06-28_19-22-02_000.mkv
+Camera_1_2026-06-28_19-22-02_000.mkv
+Camera_2_2026-06-28_19-22-02_000.mkv
 ```
 
 The Recordings tab also shows the active recording folder and lets you set a
@@ -179,25 +188,15 @@ Windows can be used as a full local DVR target. A Windows PC can typically
 handle more cameras than a Pi, depending on CPU, disk, and camera stream
 settings.
 
-Launch the Windows main screen:
+Use the included Windows launch files:
 
-```powershell
-.\Run_Ghost_DVR.bat
+```text
+Run_Ghost_DVR.bat        local lightweight DVR window
+Run_Ghost_DVR_API.bat    web dashboard/API
+Run_Ghost_DVR_Setup.bat  optional first setup
 ```
 
-Run first-time setup:
-
-```powershell
-.\Run_Ghost_DVR_Setup.bat
-```
-
-Run the local API:
-
-```powershell
-.\Run_Ghost_DVR_API.bat
-```
-
-Then open:
+After starting `Run_Ghost_DVR_API.bat`, open:
 
 ```text
 http://127.0.0.1:8080
