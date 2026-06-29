@@ -13,7 +13,12 @@ from ghost_dvr.engine import DvrEngine
 from ghost_dvr.preview import PreviewFrameGrabber
 from ghost_dvr.storage import StorageMonitor
 from ghost_dvr.stream_profile import describe_stream_profile
-from ghost_dvr.updater import check_update_status, run_update
+from ghost_dvr.updater import (
+    check_update_status,
+    restart_current_process,
+    run_update,
+    update_applied,
+)
 
 
 UPDATE_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000
@@ -332,6 +337,8 @@ class MainWindow:
         state = "out of date" if status.update_available else "current"
         self.update_status_var.set(f"Update status: {state}")
         self.message_var.set(status.message)
+        if update_applied(status):
+            restart_current_process(delay_seconds=1.0)
         self.root.after(UPDATE_CHECK_INTERVAL_MS, lambda: self.check_updates(force=True))
 
     def _refresh_preview(self, status: dict[str, object]) -> None:

@@ -365,12 +365,15 @@ class ApiTests(unittest.TestCase):
             thread.start()
             port = server.httpd.server_address[1]
             try:
-                with patch("ghost_dvr.api.run_update") as update:
-                    update.return_value = _update_status(message="Update applied")
+                with patch("ghost_dvr.api.run_update") as update, patch(
+                    "ghost_dvr.api.restart_current_process"
+                ) as restart:
+                    update.return_value = _update_status(message="Update applied. Restarting Ghost DVR.")
                     response = _request("POST", port, "/update/run")
 
-                self.assertEqual(response["message"], "Update applied")
+                self.assertEqual(response["message"], "Update applied. Restarting Ghost DVR.")
                 update.assert_called_once()
+                restart.assert_called_once()
             finally:
                 server.shutdown()
                 thread.join(timeout=5)

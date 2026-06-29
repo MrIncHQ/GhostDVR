@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ghost_dvr.updater import check_update_status, run_update
+from ghost_dvr.updater import check_update_status, run_update, update_applied
 
 
 class UpdaterTests(unittest.TestCase):
@@ -61,7 +61,8 @@ class UpdaterTests(unittest.TestCase):
 
             self.assertEqual(status.commit, "def456")
             self.assertFalse(status.update_available)
-            self.assertIn("Restart", status.message)
+            self.assertIn("Restarting", status.message)
+            self.assertTrue(update_applied(status))
 
 
 def _git_result(stdout: str, stderr: str = "", returncode: int = 0):

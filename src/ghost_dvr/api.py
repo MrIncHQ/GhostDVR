@@ -17,7 +17,7 @@ from ghost_dvr.sources.factory import create_source
 from ghost_dvr.sources.base import SourceConfig
 from ghost_dvr.storage import StorageMonitor
 from ghost_dvr.system_metrics import system_metrics
-from ghost_dvr.updater import check_update_status, run_update
+from ghost_dvr.updater import check_update_status, restart_current_process, run_update, update_applied
 
 
 UPDATE_CHECK_INTERVAL_SECONDS = 3 * 60 * 60
@@ -174,10 +174,13 @@ class GhostDvrApiServer:
                             HTTPStatus.CONFLICT,
                         )
                         return
-                    payload = run_update().to_dict()
+                    update_status = run_update()
+                    payload = update_status.to_dict()
                     update_cache["payload"] = payload
                     update_cache["checked_at"] = time.monotonic()
                     self._send_json(payload)
+                    if update_applied(update_status):
+                        restart_current_process(delay_seconds=1.0)
                     return
                 self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -1358,6 +1361,9 @@ def _web_page() -> str:
       const status = await requestJson('/update/run', { method: 'POST' });
       renderUpdateStatus(status);
       setUpdateMessage(status.message || 'Update finished. Restart Ghost DVR.');
+      if ((status.message || '').startsWith('Update applied.')) {
+        setTimeout(() => window.location.reload(), 6000);
+      }
     }
 
     function setUpdateMessage(message) {

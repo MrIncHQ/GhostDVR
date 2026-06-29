@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -133,8 +136,26 @@ def run_update(
         update_available=updated.update_available,
         behind_count=updated.behind_count,
         checked_at=updated.checked_at,
-        message="Update applied. Restart Ghost DVR to use the newest code.",
+        message="Update applied. Restarting Ghost DVR.",
     )
+
+
+def restart_current_process(delay_seconds: float = 1.0) -> None:
+    threading.Thread(
+        target=_restart_current_process,
+        args=(delay_seconds,),
+        daemon=True,
+        name="ghost-dvr-process-restart",
+    ).start()
+
+
+def update_applied(status: UpdateStatus) -> bool:
+    return status.git_available and status.message.startswith("Update applied.")
+
+
+def _restart_current_process(delay_seconds: float) -> None:
+    time.sleep(delay_seconds)
+    os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 def _git_text(args: list[str], root: Path, timeout_seconds: int) -> str:
