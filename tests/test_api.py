@@ -40,7 +40,9 @@ class ApiTests(unittest.TestCase):
             thread.start()
             port = server.httpd.server_address[1]
             try:
-                self.assertIn("Ghost DVR", _request_text("GET", port, "/"))
+                page = _request_text("GET", port, "/")
+                self.assertIn("Ghost DVR", page)
+                self.assertIn("[hidden] {\n      display: none !important;", page)
                 self.assertEqual(_request("GET", port, "/status")["device_id"], "TEST")
                 self.assertEqual(_request("GET", port, "/sources")[0]["name"], "source-1")
                 self.assertEqual(

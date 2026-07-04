@@ -1094,6 +1094,9 @@ def _web_page() -> str:
       background: var(--page-bg);
       color: var(--text);
     }
+    [hidden] {
+      display: none !important;
+    }
     .auth-screen {
       min-height: 100vh;
       display: grid;
