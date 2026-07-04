@@ -21,6 +21,40 @@ The installer will:
 * make the Pi launch files executable
 * create desktop launchers when the Pi has a Desktop folder
 
+## Headless Raspberry Pi Over SSH
+
+For Raspberry Pi OS Lite or any Pi without a screen, set up SSH before first
+boot. In Raspberry Pi Imager, use the OS customization settings to enable SSH,
+set the username/password, configure Wi-Fi if needed, and set the hostname.
+
+After the Pi boots, connect from another computer on the same network:
+
+```bash
+ssh YOUR_PI_USERNAME@DEVICE_IP_ADDRESS
+```
+
+Then run the installer on the Pi:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MrIncHQ/GhostDVR/main/install_pi.sh | bash
+```
+
+Start the web dashboard/API:
+
+```bash
+~/GhostDVR/Run_Ghost_DVR_API_Pi.sh
+```
+
+Leave that SSH session running unless you enable **Start web dashboard on device
+boot** from the Status tab. From another device on the same network, open:
+
+```text
+http://DEVICE_IP_ADDRESS:8080
+```
+
+Use the Cameras tab to discover or manually add the first camera. The setup
+launcher is optional for API-only/headless use.
+
 ## First Setup
 
 After install, you can run the setup launcher to create the first local camera
