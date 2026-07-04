@@ -5,6 +5,7 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
+from ghost_dvr.auth import default_auth_config
 from ghost_dvr.identity import DeviceIdentity
 
 
@@ -54,6 +55,7 @@ def default_config(identity: DeviceIdentity) -> dict[str, Any]:
             "host": "0.0.0.0",
             "port": 8080,
         },
+        "web_auth": default_auth_config(),
         "time": {
             "_notes": "Use local for the computer timezone, UTC for UTC, or an IANA timezone when available.",
             "timezone": "local",

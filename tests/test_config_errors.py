@@ -61,6 +61,21 @@ class ConfigErrorTests(unittest.TestCase):
             self.assertNotIn("admin_token", config["web"])
             self.assertNotIn("admin_token", json.loads(path.read_text())["web"])
 
+    def test_new_config_requires_web_auth_setup_decision(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+
+            config = load_or_create_config(
+                path,
+                DeviceIdentity(
+                    uuid="00000000-0000-0000-0000-000000000000",
+                    device_id="TEST",
+                    hostname="ghostdvr-test",
+                ),
+            )
+
+            self.assertEqual(config["web_auth"]["mode"], "unset")
+
 
 if __name__ == "__main__":
     unittest.main()

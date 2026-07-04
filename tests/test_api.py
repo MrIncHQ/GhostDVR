@@ -345,6 +345,172 @@ class ApiTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
+    def test_auth_setup_can_be_skipped(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _api_config()
+            config["web_auth"] = {"mode": "unset"}
+            config_file = Path(temp_dir) / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config=config,
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                blocked = _request("GET", port, "/status")
+                skipped, skipped_headers = _request_with_headers("POST", port, "/auth/setup", body={"action": "skip"})
+                status = _request("GET", port, "/status")
+
+                self.assertEqual(blocked["error"], "Dashboard auth setup is required")
+                self.assertFalse(skipped["setup_required"])
+                self.assertFalse(skipped["auth_enabled"])
+                self.assertIn("Max-Age=0", skipped_headers["Set-Cookie"])
+                self.assertEqual(status["device_id"], "TEST")
+                self.assertEqual(config["web_auth"]["mode"], "disabled")
+                self.assertTrue(config_file.exists())
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_password_auth_protects_api_until_login(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _api_config()
+            config["web_auth"] = {"mode": "unset"}
+            config_file = Path(temp_dir) / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config=config,
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                setup_body, setup_headers = _request_with_headers(
+                    "POST",
+                    port,
+                    "/auth/setup",
+                    body={
+                        "action": "password",
+                        "password": "local-pass-123",
+                        "confirm_password": "local-pass-123",
+                    },
+                )
+                cookie = setup_headers["Set-Cookie"].split(";", 1)[0]
+                protected = _request("GET", port, "/status")
+                authorized = _request("GET", port, "/status", headers={"Cookie": cookie})
+                bad_login = _request("POST", port, "/auth/login", body={"password": "wrong"})
+                login_body, login_headers = _request_with_headers(
+                    "POST",
+                    port,
+                    "/auth/login",
+                    body={"password": "local-pass-123"},
+                )
+                login_cookie = login_headers["Set-Cookie"].split(";", 1)[0]
+                logged_in = _request("GET", port, "/status", headers={"Cookie": login_cookie})
+
+                self.assertTrue(setup_body["auth_enabled"])
+                self.assertTrue(setup_body["authenticated"])
+                self.assertEqual(protected["error"], "Login required")
+                self.assertEqual(authorized["device_id"], "TEST")
+                self.assertEqual(bad_login["error"], "Invalid dashboard password")
+                self.assertTrue(login_body["authenticated"])
+                self.assertEqual(logged_in["device_id"], "TEST")
+                self.assertNotIn("local-pass-123", config["web_auth"]["password_hash"])
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_logout_clears_dashboard_session(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _api_config()
+            config["web_auth"] = {"mode": "unset"}
+            config_file = Path(temp_dir) / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config=config,
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                _, setup_headers = _request_with_headers(
+                    "POST",
+                    port,
+                    "/auth/setup",
+                    body={
+                        "action": "password",
+                        "password": "local-pass-123",
+                        "confirm_password": "local-pass-123",
+                    },
+                )
+                cookie = setup_headers["Set-Cookie"].split(";", 1)[0]
+                logout = _request("POST", port, "/auth/logout", headers={"Cookie": cookie})
+                protected = _request("GET", port, "/status", headers={"Cookie": cookie})
+
+                self.assertFalse(logout["authenticated"])
+                self.assertEqual(protected["error"], "Login required")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_existing_open_dashboard_can_enable_and_disable_password_auth(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _api_config()
+            config.pop("web_auth", None)
+            config_file = Path(temp_dir) / "runtime" / "config.json"
+            config_file.parent.mkdir()
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(),
+                events_log=Path(temp_dir) / "events.log",
+                config=config,
+                config_file=config_file,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                open_status = _request("GET", port, "/status")
+                auth_body, auth_headers = _request_with_headers(
+                    "POST",
+                    port,
+                    "/auth/password",
+                    body={
+                        "password": "local-pass-123",
+                        "confirm_password": "local-pass-123",
+                    },
+                )
+                cookie = auth_headers["Set-Cookie"].split(";", 1)[0]
+                blocked = _request("GET", port, "/status")
+                authorized = _request("GET", port, "/status", headers={"Cookie": cookie})
+                disabled = _request("POST", port, "/auth/disable", headers={"Cookie": cookie})
+                open_again = _request("GET", port, "/status")
+
+                self.assertEqual(open_status["device_id"], "TEST")
+                self.assertTrue(auth_body["auth_enabled"])
+                self.assertTrue(auth_body["authenticated"])
+                self.assertEqual(blocked["error"], "Login required")
+                self.assertEqual(authorized["device_id"], "TEST")
+                self.assertFalse(disabled["auth_enabled"])
+                self.assertEqual(open_again["device_id"], "TEST")
+                self.assertEqual(config["web_auth"]["mode"], "disabled")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
     def test_startup_api_status_endpoint_reports_autostart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_file = Path(temp_dir) / "runtime" / "config.json"
@@ -421,7 +587,7 @@ class ApiTests(unittest.TestCase):
                     response = _request("GET", port, "/update/status?force=1")
 
                 self.assertTrue(response["update_available"])
-                self.assertEqual(response["version"], "0.2.0")
+                self.assertEqual(response["version"], "0.3.1")
                 self.assertIn("Update available", response["message"])
             finally:
                 server.shutdown()
@@ -945,6 +1111,21 @@ def _request(method: str, port: int, path: str, headers=None, body=None):
         connection.close()
 
 
+def _request_with_headers(method: str, port: int, path: str, headers=None, body=None):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        payload = None if body is None else json.dumps(body)
+        request_headers = headers or {}
+        if body is not None:
+            request_headers = {"Content-Type": "application/json", **request_headers}
+        connection.request(method, path, body=payload, headers=request_headers)
+        response = connection.getresponse()
+        body_text = response.read().decode("utf-8")
+        return json.loads(body_text), {key: value for key, value in response.getheaders()}
+    finally:
+        connection.close()
+
+
 def _api_config():
     return {
         "web": {"admin_token": "test-token"},
@@ -963,7 +1144,7 @@ def _api_config():
 
 def _update_status(update_available=False, message="Update available"):
     return UpdateStatus(
-        version="0.2.0",
+        version="0.3.1",
         commit="abc123",
         branch="main",
         git_available=True,

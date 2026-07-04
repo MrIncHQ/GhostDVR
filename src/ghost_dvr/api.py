@@ -12,6 +12,16 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from ghost_dvr.auth import (
+    AUTH_COOKIE_NAME,
+    auth_required,
+    auth_status,
+    configure_password,
+    disable_auth,
+    new_session_token,
+    setup_required,
+    verify_password,
+)
 from ghost_dvr.autostart import api_autostart_status, set_api_autostart
 from ghost_dvr.config import save_config
 from ghost_dvr.discovery import discover_onvif_cameras
@@ -74,6 +84,7 @@ class GhostDvrApiServer:
         recordings_dir = self.recordings_dir
         preview_grabber = self.preview_grabber
         update_cache: dict[str, Any] = {"checked_at": 0.0, "payload": None}
+        sessions: set[str] = set()
 
         def cached_update_status(force: bool = False) -> dict[str, object]:
             now = time.monotonic()
@@ -94,6 +105,16 @@ class GhostDvrApiServer:
                 parsed_path = urlparse(self.path)
                 if parsed_path.path == "/":
                     self._send_html(_web_page())
+                    return
+                if parsed_path.path == "/auth/status":
+                    self._send_json(
+                        auth_status(
+                            config,
+                            authenticated=self._is_authenticated(),
+                        ).to_dict()
+                    )
+                    return
+                if not self._authorize_request():
                     return
                 if parsed_path.path == "/status":
                     self._send_json(engine.snapshot())
@@ -162,6 +183,23 @@ class GhostDvrApiServer:
 
             def do_POST(self) -> None:
                 parsed_path = urlparse(self.path)
+                if parsed_path.path == "/auth/setup":
+                    self._handle_auth_setup(config, config_file)
+                    return
+                if parsed_path.path == "/auth/login":
+                    self._handle_auth_login(config, sessions)
+                    return
+                if parsed_path.path == "/auth/logout":
+                    self._handle_auth_logout(sessions)
+                    return
+                if not self._authorize_request():
+                    return
+                if parsed_path.path == "/auth/password":
+                    self._handle_auth_password(config, config_file, sessions)
+                    return
+                if parsed_path.path == "/auth/disable":
+                    self._handle_auth_disable(config, config_file, sessions)
+                    return
                 if parsed_path.path == "/record/start":
                     self._handle_engine_action(engine.start_recording)
                     return
@@ -229,6 +267,158 @@ class GhostDvrApiServer:
                         {"error": str(exc)},
                         HTTPStatus.INTERNAL_SERVER_ERROR,
                     )
+
+            def _authorize_request(self) -> bool:
+                if setup_required(config):
+                    self._send_json(
+                        {"error": "Dashboard auth setup is required"},
+                        HTTPStatus.FORBIDDEN,
+                    )
+                    return False
+                if not auth_required(config):
+                    return True
+                if self._is_authenticated():
+                    return True
+                self._send_json({"error": "Login required"}, HTTPStatus.UNAUTHORIZED)
+                return False
+
+            def _is_authenticated(self) -> bool:
+                if not auth_required(config):
+                    return not setup_required(config)
+                token = self._session_cookie()
+                return bool(token and token in sessions)
+
+            def _session_cookie(self) -> str:
+                cookie_header = self.headers.get("Cookie", "")
+                for item in cookie_header.split(";"):
+                    name, _, value = item.strip().partition("=")
+                    if name == AUTH_COOKIE_NAME:
+                        return value
+                return ""
+
+            def _set_session_cookie(self, token: str, *, clear: bool = False) -> None:
+                max_age = "0" if clear else str(60 * 60 * 24 * 30)
+                value = "" if clear else token
+                self.send_header(
+                    "Set-Cookie",
+                    f"{AUTH_COOKIE_NAME}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax",
+                )
+
+            def _handle_auth_setup(
+                self,
+                config: dict[str, Any],
+                config_file: Path | None,
+            ) -> None:
+                if not setup_required(config):
+                    self._send_json({"error": "Dashboard auth setup is already complete"}, HTTPStatus.CONFLICT)
+                    return
+                if config_file is None:
+                    self._send_json({"error": "Config file is not available"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                try:
+                    payload = self._read_json_body()
+                    action = str(payload.get("action") or "password")
+                    token = ""
+                    clear_cookie = False
+                    if action == "skip":
+                        disable_auth(config)
+                        clear_cookie = True
+                    elif action == "password":
+                        password = str(payload.get("password") or "")
+                        confirm = str(payload.get("confirm_password") or "")
+                        if password != confirm:
+                            raise ValueError("Dashboard passwords do not match")
+                        configure_password(config, password)
+                        token = new_session_token()
+                        sessions.add(token)
+                    else:
+                        raise ValueError("Unsupported auth setup action")
+                    save_config(config_file, config)
+                    self._send_auth_response(config, token=token, clear=clear_cookie)
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+            def _handle_auth_login(
+                self,
+                config: dict[str, Any],
+                sessions: set[str],
+            ) -> None:
+                if setup_required(config):
+                    self._send_json({"error": "Dashboard auth setup is required"}, HTTPStatus.FORBIDDEN)
+                    return
+                if not auth_required(config):
+                    self._send_json(auth_status(config, authenticated=True).to_dict())
+                    return
+                payload = self._read_json_body()
+                password = str(payload.get("password") or "")
+                if not verify_password(config, password):
+                    self._send_json({"error": "Invalid dashboard password"}, HTTPStatus.UNAUTHORIZED)
+                    return
+                token = new_session_token()
+                sessions.add(token)
+                self._send_auth_response(config, token=token)
+
+            def _handle_auth_logout(self, sessions: set[str]) -> None:
+                token = self._session_cookie()
+                if token:
+                    sessions.discard(token)
+                self._send_auth_response(config, token="", clear=True)
+
+            def _handle_auth_password(
+                self,
+                config: dict[str, Any],
+                config_file: Path | None,
+                sessions: set[str],
+            ) -> None:
+                if config_file is None:
+                    self._send_json({"error": "Config file is not available"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                try:
+                    payload = self._read_json_body()
+                    password = str(payload.get("password") or "")
+                    confirm = str(payload.get("confirm_password") or "")
+                    if password != confirm:
+                        raise ValueError("Dashboard passwords do not match")
+                    configure_password(config, password)
+                    token = new_session_token()
+                    sessions.add(token)
+                    save_config(config_file, config)
+                    self._send_auth_response(config, token=token)
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+            def _handle_auth_disable(
+                self,
+                config: dict[str, Any],
+                config_file: Path | None,
+                sessions: set[str],
+            ) -> None:
+                if config_file is None:
+                    self._send_json({"error": "Config file is not available"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                disable_auth(config)
+                sessions.clear()
+                save_config(config_file, config)
+                self._send_auth_response(config, token="", clear=True)
+
+            def _send_auth_response(
+                self,
+                config: dict[str, Any],
+                *,
+                token: str,
+                clear: bool = False,
+            ) -> None:
+                payload = auth_status(
+                    config,
+                    authenticated=bool(token) or not auth_required(config),
+                ).to_dict()
+                body = json.dumps(payload, indent=2).encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self._set_session_cookie(token, clear=clear)
+                self.end_headers()
+                self.wfile.write(body)
 
             def _handle_device_power(self, engine: DvrEngine, action: str) -> None:
                 if engine.recorder.is_recording():
@@ -904,6 +1094,29 @@ def _web_page() -> str:
       background: var(--page-bg);
       color: var(--text);
     }
+    .auth-screen {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .auth-card {
+      width: min(520px, 100%);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      background: var(--panel-bg);
+      padding: 24px;
+    }
+    .auth-card h1 {
+      margin-bottom: 10px;
+    }
+    .auth-card label {
+      display: block;
+      margin: 12px 0;
+    }
+    .auth-card .actions {
+      margin-bottom: 8px;
+    }
     main {
       max-width: 980px;
       margin: 0 auto;
@@ -1181,10 +1394,42 @@ def _web_page() -> str:
   </style>
 </head>
 <body>
-  <main>
+  <section id="authScreen" class="auth-screen" hidden>
+    <div class="auth-card">
+      <h1>Ghost DVR</h1>
+      <div id="authSetup" hidden>
+        <p class="message">Create a local dashboard password, or skip login protection for trusted local-only use.</p>
+        <label>
+          <span class="label">Dashboard Password</span>
+          <input id="setupPassword" type="password" autocomplete="new-password">
+        </label>
+        <label>
+          <span class="label">Confirm Password</span>
+          <input id="setupConfirmPassword" type="password" autocomplete="new-password">
+        </label>
+        <div class="actions">
+          <button id="createPasswordButton" type="button">Create Password</button>
+          <button id="skipAuthButton" type="button" class="secondary">Skip Login</button>
+        </div>
+      </div>
+      <div id="authLogin" hidden>
+        <p class="message">Enter the local dashboard password for this Ghost DVR device.</p>
+        <label>
+          <span class="label">Dashboard Password</span>
+          <input id="loginPassword" type="password" autocomplete="current-password">
+        </label>
+        <div class="actions">
+          <button id="loginButton" type="button">Log In</button>
+        </div>
+      </div>
+      <div id="authMessage" class="message"></div>
+    </div>
+  </section>
+  <main id="appShell" hidden>
     <header>
       <h1>Ghost DVR</h1>
       <div>
+        <button id="logoutButton" type="button" class="secondary" hidden>Logout</button>
         <button id="themeToggleButton" type="button" class="secondary">Dark Mode</button>
         <button id="recordButton" type="button">Start Recording</button>
       </div>
@@ -1334,6 +1579,25 @@ def _web_page() -> str:
         </div>
         <div id="powerMessage" class="message"></div>
       </section>
+      <section class="panel">
+        <h3>Dashboard Login</h3>
+        <p id="dashboardLoginStatus" class="message">Checking dashboard login status...</p>
+        <div class="settings-row">
+          <label>
+            <span class="label">New Dashboard Password</span>
+            <input id="dashboardPassword" type="password" autocomplete="new-password">
+          </label>
+          <label>
+            <span class="label">Confirm Password</span>
+            <input id="dashboardConfirmPassword" type="password" autocomplete="new-password">
+          </label>
+          <button id="saveDashboardPasswordButton" type="button">Enable Login</button>
+        </div>
+        <div class="power-row">
+          <button id="disableDashboardLoginButton" type="button" class="secondary">Disable Dashboard Login</button>
+        </div>
+        <div id="dashboardLoginMessage" class="message"></div>
+      </section>
       <h2>Status Log</h2>
       <pre id="events"></pre>
     </section>
@@ -1344,6 +1608,9 @@ def _web_page() -> str:
     let sourceConfigLoaded = false;
     let recordingConfigLoaded = false;
     let storageConfigLoaded = false;
+    let refreshTimer = null;
+    let previewTimer = null;
+    let currentAuthStatus = null;
 
     async function requestJson(path, options) {
       const response = await fetch(path, options);
@@ -1371,9 +1638,157 @@ def _web_page() -> str:
       applyTheme(current === 'dark' ? 'light' : 'dark');
     }
 
+    async function initAuth() {
+      try {
+        const status = await requestJson('/auth/status');
+        renderAuthState(status);
+      } catch (error) {
+        showAuthMessage(`Auth check failed: ${error.message}`);
+      }
+    }
+
+    function renderAuthState(status) {
+      currentAuthStatus = status;
+      renderDashboardLoginStatus(status);
+      const authScreen = document.getElementById('authScreen');
+      const appShell = document.getElementById('appShell');
+      const setup = document.getElementById('authSetup');
+      const login = document.getElementById('authLogin');
+      document.getElementById('logoutButton').hidden = !status.auth_enabled;
+
+      if (status.setup_required) {
+        authScreen.hidden = false;
+        appShell.hidden = true;
+        setup.hidden = false;
+        login.hidden = true;
+        return;
+      }
+      if (status.auth_enabled && !status.authenticated) {
+        authScreen.hidden = false;
+        appShell.hidden = true;
+        setup.hidden = true;
+        login.hidden = false;
+        return;
+      }
+      authScreen.hidden = true;
+      appShell.hidden = false;
+      setup.hidden = true;
+      login.hidden = true;
+      startDashboard();
+    }
+
+    function renderDashboardLoginStatus(status) {
+      const statusElement = document.getElementById('dashboardLoginStatus');
+      const saveButton = document.getElementById('saveDashboardPasswordButton');
+      const disableButton = document.getElementById('disableDashboardLoginButton');
+      if (!statusElement || !saveButton || !disableButton) return;
+      if (status.setup_required) {
+        statusElement.textContent = 'Choose a login option before using the dashboard.';
+        saveButton.textContent = 'Enable Login';
+        disableButton.hidden = true;
+        return;
+      }
+      if (status.auth_enabled) {
+        statusElement.textContent = 'Dashboard login is enabled.';
+        saveButton.textContent = 'Update Password';
+        disableButton.hidden = false;
+        return;
+      }
+      statusElement.textContent = 'Dashboard login is disabled. Anyone on the local network who can reach this device can open the dashboard.';
+      saveButton.textContent = 'Enable Login';
+      disableButton.hidden = true;
+    }
+
+    async function setupDashboardAuth(action) {
+      const body = { action };
+      if (action === 'password') {
+        body.password = document.getElementById('setupPassword').value;
+        body.confirm_password = document.getElementById('setupConfirmPassword').value;
+      }
+      const status = await requestJson('/auth/setup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+      showAuthMessage('');
+      renderAuthState(status);
+    }
+
+    async function loginDashboard() {
+      const status = await requestJson('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          password: document.getElementById('loginPassword').value
+        })
+      });
+      showAuthMessage('');
+      renderAuthState(status);
+    }
+
+    async function logoutDashboard() {
+      const status = await requestJson('/auth/logout', { method: 'POST' });
+      stopDashboard();
+      renderAuthState(status);
+    }
+
+    async function saveDashboardPassword() {
+      const status = await requestJson('/auth/password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          password: document.getElementById('dashboardPassword').value,
+          confirm_password: document.getElementById('dashboardConfirmPassword').value
+        })
+      });
+      document.getElementById('dashboardPassword').value = '';
+      document.getElementById('dashboardConfirmPassword').value = '';
+      renderAuthState(status);
+      setDashboardLoginMessage(status.auth_enabled ? 'Dashboard login password saved.' : 'Dashboard login updated.');
+    }
+
+    async function disableDashboardLogin() {
+      if (!confirm('Disable dashboard login? Anyone on this local network who can reach the device IP can open the dashboard.')) {
+        return;
+      }
+      const status = await requestJson('/auth/disable', { method: 'POST' });
+      renderAuthState(status);
+      setDashboardLoginMessage('Dashboard login disabled.');
+    }
+
+    function setDashboardLoginMessage(message) {
+      document.getElementById('dashboardLoginMessage').textContent = message;
+    }
+
+    function showAuthMessage(message) {
+      document.getElementById('authMessage').textContent = message;
+    }
+
+    function startDashboard() {
+      if (refreshTimer || previewTimer) return;
+      refresh();
+      refreshPreview();
+      refreshTimer = setInterval(refresh, 5000);
+      previewTimer = setInterval(refreshPreview, 5000);
+    }
+
+    function stopDashboard() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (previewTimer) clearInterval(previewTimer);
+      refreshTimer = null;
+      previewTimer = null;
+    }
+
     async function refresh() {
       const status = await requestJson('/status');
       const system = await requestJson('/system');
+      const auth = await requestJson('/auth/status');
       const updateStatus = await requestJson('/update/status');
       const apiAutostart = await requestJson('/startup/api');
       const sourceConfig = await requestJson('/config/sources');
@@ -1402,6 +1817,7 @@ def _web_page() -> str:
         : `${system.temperature_c} C`;
       document.getElementById('uptime').textContent = formatUptime(system.uptime_seconds);
       renderUpdateStatus(updateStatus);
+      renderDashboardLoginStatus(auth);
       renderApiAutostart(apiAutostart);
       document.getElementById('profile').textContent = sourceConfig.hardware_profile?.name || '-';
       document.getElementById('recommendedSources').textContent = sourceConfig.recommended_sources || '-';
@@ -1951,6 +2367,66 @@ def _web_page() -> str:
 
     document.getElementById('themeToggleButton').addEventListener('click', toggleTheme);
 
+    document.getElementById('createPasswordButton').addEventListener('click', async () => {
+      try {
+        await setupDashboardAuth('password');
+      } catch (error) {
+        showAuthMessage(`Setup failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('skipAuthButton').addEventListener('click', async () => {
+      if (!confirm('Skip dashboard login? Anyone on this local network who can reach the device IP can open the dashboard.')) {
+        return;
+      }
+      try {
+        await setupDashboardAuth('skip');
+      } catch (error) {
+        showAuthMessage(`Setup failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('loginButton').addEventListener('click', async () => {
+      try {
+        await loginDashboard();
+      } catch (error) {
+        showAuthMessage(`Login failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('loginPassword').addEventListener('keydown', async event => {
+      if (event.key !== 'Enter') return;
+      try {
+        await loginDashboard();
+      } catch (error) {
+        showAuthMessage(`Login failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('logoutButton').addEventListener('click', async () => {
+      try {
+        await logoutDashboard();
+      } catch (error) {
+        showAuthMessage(`Logout failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('saveDashboardPasswordButton').addEventListener('click', async () => {
+      try {
+        await saveDashboardPassword();
+      } catch (error) {
+        setDashboardLoginMessage(`Save failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('disableDashboardLoginButton').addEventListener('click', async () => {
+      try {
+        await disableDashboardLogin();
+      } catch (error) {
+        setDashboardLoginMessage(`Disable failed: ${error.message}`);
+      }
+    });
+
     document.getElementById('checkUpdateButton').addEventListener('click', async () => {
       try {
         await checkUpdates();
@@ -2042,10 +2518,7 @@ def _web_page() -> str:
     });
 
     initTheme();
-    refresh();
-    refreshPreview();
-    setInterval(refresh, 5000);
-    setInterval(refreshPreview, 5000);
+    initAuth();
   </script>
 </body>
 </html>

@@ -97,6 +97,12 @@ def sanitized_config(config: dict[str, object]) -> dict[str, object]:
     web_config = sanitized.get("web", {})
     if isinstance(web_config, dict) and web_config.get("admin_token"):
         web_config["admin_token"] = "<redacted>"
+    web_auth = sanitized.get("web_auth", {})
+    if isinstance(web_auth, dict):
+        if web_auth.get("password_hash"):
+            web_auth["password_hash"] = "<redacted>"
+        if web_auth.get("salt"):
+            web_auth["salt"] = "<redacted>"
     return sanitized
 
 
