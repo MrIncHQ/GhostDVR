@@ -192,6 +192,15 @@ The Recordings tab also shows the active recording folder and lets you set a
 preferred save folder. Leave it blank to use the default `runtime/recordings`
 folder. Stop recording before changing the save folder.
 
+The Recordings tab includes a **Test Recording** button. Use it to create a
+short test clip before field use. It verifies that the selected camera can be
+recorded, that the active save folder is writable, and that the resulting file
+contains a readable video stream.
+
+The dashboard shows storage warnings when free space is low or close to the
+configured free-space floor. On low-power hardware, the Cameras tab also warns
+when the configured camera count is above the detected hardware recommendation.
+
 ## Updating
 
 Run the installer again:

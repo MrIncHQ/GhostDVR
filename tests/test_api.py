@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import http.client
 import json
+import subprocess
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from ghost_dvr.api import GhostDvrApiServer, _device_power_command
@@ -589,7 +591,7 @@ class ApiTests(unittest.TestCase):
                     response = _request("GET", port, "/update/status?force=1")
 
                 self.assertTrue(response["update_available"])
-                self.assertEqual(response["version"], "0.3.1")
+                self.assertEqual(response["version"], "0.3.2")
                 self.assertIn("Update available", response["message"])
             finally:
                 server.shutdown()
@@ -730,6 +732,69 @@ class ApiTests(unittest.TestCase):
                 self.assertTrue(engine.started)
                 self.assertFalse(_request("POST", port, "/record/stop")["recording"])
                 self.assertTrue(engine.stopped)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_test_recording_endpoint_creates_short_validated_clip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recordings_dir = Path(temp_dir) / "recordings"
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(recordings_dir=recordings_dir),
+                events_log=Path(temp_dir) / "events.log",
+                recordings_dir=recordings_dir,
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                def run_ffmpeg(command, **kwargs):
+                    Path(command[-1]).write_bytes(b"video")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
+                with patch("ghost_dvr.api.find_ffmpeg", return_value="ffmpeg"), patch(
+                    "ghost_dvr.api.subprocess.run",
+                    side_effect=run_ffmpeg,
+                ), patch(
+                    "ghost_dvr.api.probe_stream",
+                    return_value=SimpleNamespace(
+                        ok=True,
+                        codec_name="h264",
+                        width=640,
+                        height=360,
+                        error=None,
+                    ),
+                ):
+                    response = _request(
+                        "POST",
+                        port,
+                        "/record/test",
+                        body={"source_id": "source-1", "duration_seconds": 10},
+                    )
+
+                self.assertTrue(response["ok"])
+                self.assertEqual(response["codec_name"], "h264")
+                self.assertTrue((recordings_dir / response["file"]).exists())
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+    def test_test_recording_endpoint_is_blocked_while_recording(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = GhostDvrApiServer(
+                engine=FakeApiEngine(recording=True),
+                events_log=Path(temp_dir) / "events.log",
+                port=0,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.httpd.server_address[1]
+            try:
+                response = _request("POST", port, "/record/test", body={})
+
+                self.assertFalse(response["ok"])
+                self.assertEqual(response["error"], "Stop recording before running a test recording")
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -1146,7 +1211,7 @@ def _api_config():
 
 def _update_status(update_available=False, message="Update available"):
     return UpdateStatus(
-        version="0.3.1",
+        version="0.3.2",
         commit="abc123",
         branch="main",
         git_available=True,

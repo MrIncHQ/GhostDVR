@@ -65,6 +65,25 @@ class SourceProbeTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertNotIn("camera-pass", result.error or "")
 
+    def test_probe_reports_friendly_stream_not_found_error(self):
+        completed = subprocess.CompletedProcess(
+            args=["ffprobe"],
+            returncode=1,
+            stdout="",
+            stderr="method DESCRIBE failed: 404 Stream Not Found",
+        )
+        with patch("ghost_dvr.source_probe.find_ffmpeg", return_value="C:/bin/ffmpeg.exe"), patch(
+            "ghost_dvr.source_probe.find_ffprobe",
+            return_value="C:/bin/ffprobe.exe",
+        ), patch(
+            "subprocess.run",
+            return_value=completed,
+        ):
+            result = probe_stream("rtsp://camera/stream")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "Camera stream path was not found. Check the RTSP URL path.")
+
 
 if __name__ == "__main__":
     unittest.main()

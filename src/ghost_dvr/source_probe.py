@@ -36,16 +36,16 @@ def probe_stream(stream: str, timeout_seconds: int = 15) -> StreamProbeResult:
         ffprobe,
         "-v",
         "error",
-        "-rtsp_transport",
-        "tcp",
         "-select_streams",
         "v:0",
         "-show_entries",
         "stream=codec_name,codec_type,width,height",
         "-of",
         "json",
-        stream,
     ]
+    if stream.lower().startswith("rtsp://"):
+        command[3:3] = ["-rtsp_transport", "tcp"]
+    command.append(stream)
 
     try:
         result = subprocess.run(
@@ -60,9 +60,10 @@ def probe_stream(stream: str, timeout_seconds: int = 15) -> StreamProbeResult:
         return StreamProbeResult(ok=False, error=str(exc))
 
     if result.returncode != 0:
+        detail = result.stderr.strip() or "Source probe failed"
         return StreamProbeResult(
             ok=False,
-            error=redact_url_credentials(result.stderr.strip() or "Source probe failed"),
+            error=friendly_probe_error(detail),
         )
 
     data: dict[str, Any] = json.loads(result.stdout)
@@ -78,3 +79,23 @@ def probe_stream(stream: str, timeout_seconds: int = 15) -> StreamProbeResult:
         width=stream_info.get("width"),
         height=stream_info.get("height"),
     )
+
+
+def friendly_probe_error(error: str) -> str:
+    detail = redact_url_credentials(error.strip() or "Source probe failed")
+    lower = detail.lower()
+    if "401" in lower or "unauthorized" in lower:
+        return "Camera login failed. Check the username and password."
+    if "403" in lower or "forbidden" in lower:
+        return "Camera refused access. Check camera permissions or RTSP settings."
+    if "404" in lower or "stream not found" in lower:
+        return "Camera stream path was not found. Check the RTSP URL path."
+    if "timed out" in lower or "timeout" in lower:
+        return "Camera connection timed out. Check that the camera is online and reachable from this device."
+    if "connection refused" in lower:
+        return "Camera refused the connection. Check the IP address, port, and whether RTSP is enabled."
+    if "no route to host" in lower or "host is unreachable" in lower or "network is unreachable" in lower:
+        return "Camera is not reachable from this device. Check network, IP address, and VLAN/Wi-Fi routing."
+    if "invalid data found" in lower or "could not find codec parameters" in lower:
+        return "Camera stream opened but the video format could not be read. Try a different stream profile."
+    return detail.splitlines()[-1] if detail else "Source probe failed"

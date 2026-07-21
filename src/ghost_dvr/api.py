@@ -29,6 +29,7 @@ from ghost_dvr.engine import DvrEngine
 from ghost_dvr.ffmpeg import find_ffmpeg
 from ghost_dvr.preview import PreviewFrameGrabber
 from ghost_dvr.recording_library import list_recordings
+from ghost_dvr.source_probe import friendly_probe_error, probe_stream
 from ghost_dvr.sources.factory import create_source
 from ghost_dvr.sources.base import SourceConfig
 from ghost_dvr.storage import StorageMonitor
@@ -202,6 +203,12 @@ class GhostDvrApiServer:
                     return
                 if parsed_path.path == "/record/start":
                     self._handle_engine_action(engine.start_recording)
+                    return
+                if parsed_path.path == "/record/test":
+                    self._handle_test_recording(
+                        engine,
+                        _active_recordings_dir(engine, recordings_dir),
+                    )
                     return
                 if parsed_path.path == "/record/stop":
                     self._handle_engine_action(engine.stop_recording)
@@ -538,6 +545,34 @@ class GhostDvrApiServer:
                 except Exception as exc:
                     self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
+            def _handle_test_recording(
+                self,
+                engine: DvrEngine,
+                recordings_dir: Path,
+            ) -> None:
+                if engine.recorder.is_recording():
+                    self._send_json(
+                        {"ok": False, "error": "Stop recording before running a test recording"},
+                        HTTPStatus.CONFLICT,
+                    )
+                    return
+                try:
+                    payload = self._read_json_body()
+                    source_id = str(payload.get("source_id") or "").strip() or None
+                    duration_seconds = int(payload.get("duration_seconds", 10) or 10)
+                    result = _run_test_recording(
+                        engine,
+                        recordings_dir,
+                        source_id=source_id,
+                        duration_seconds=duration_seconds,
+                    )
+                    self._send_json(result)
+                except Exception as exc:
+                    self._send_json(
+                        {"ok": False, "error": str(exc)},
+                        HTTPStatus.BAD_REQUEST,
+                    )
+
             def _handle_recording_config_save(
                 self,
                 engine: DvrEngine,
@@ -786,6 +821,126 @@ def _mp4_export_for_recording(video_file: Path) -> Path:
         raise RuntimeError(detail.splitlines()[-1])
     temp_output.replace(output)
     return output
+
+
+def _run_test_recording(
+    engine: DvrEngine,
+    recordings_dir: Path,
+    *,
+    source_id: str | None = None,
+    duration_seconds: int = 10,
+) -> dict[str, Any]:
+    if duration_seconds < 3 or duration_seconds > 30:
+        raise ValueError("Test recording duration must be between 3 and 30 seconds")
+
+    source = _select_test_recording_source(engine, source_id)
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        raise RuntimeError("FFmpeg is required to run a test recording")
+
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    source_name = str(getattr(source, "name", None) or getattr(source, "source_id", "camera"))
+    started = time.strftime("%Y-%m-%d_%H-%M-%S")
+    output = recordings_dir / f"Test_{_safe_filename_part(source_name)}_{started}.mkv"
+    command = _test_recording_command(ffmpeg, source, output, duration_seconds)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=duration_seconds + 20,
+    )
+    if result.returncode != 0:
+        if output.exists():
+            output.unlink()
+        detail = (result.stderr or result.stdout or "Test recording failed").strip()
+        raise RuntimeError(friendly_probe_error(detail))
+    if not output.exists() or output.stat().st_size == 0:
+        raise RuntimeError("Test recording did not create a playable video file")
+
+    probe = probe_stream(str(output), timeout_seconds=15)
+    if not probe.ok:
+        raise RuntimeError(probe.error or "Test recording file has no readable video stream")
+
+    return {
+        "ok": True,
+        "file": output.name,
+        "source_id": str(getattr(source, "source_id", "")),
+        "source_name": source_name,
+        "duration_seconds": duration_seconds,
+        "size_bytes": output.stat().st_size,
+        "codec_name": probe.codec_name,
+        "width": probe.width,
+        "height": probe.height,
+    }
+
+
+def _select_test_recording_source(engine: DvrEngine, source_id: str | None):
+    candidates = []
+    for source in engine.refresh_sources():
+        current_source_id = str(getattr(source, "source_id", ""))
+        if source_id and current_source_id != source_id:
+            continue
+        if bool(getattr(source, "online", False)) and getattr(source, "stream", None):
+            candidates.append(source)
+    if not candidates:
+        if source_id:
+            raise RuntimeError("Selected camera is not online or has no stream")
+        raise RuntimeError("No online camera is available for a test recording")
+    return candidates[0]
+
+
+def _test_recording_command(
+    ffmpeg: str,
+    source,
+    output: Path,
+    duration_seconds: int,
+) -> list[str]:
+    source_type = str(getattr(source, "source_type", "rtsp") or "rtsp").lower()
+    stream = str(getattr(source, "stream", "") or "")
+    input_args: list[str] = []
+    if source_type == "mock":
+        input_args = ["-re", "-stream_loop", "-1"]
+    elif source_type == "rtsp":
+        input_args = [
+            "-rtsp_transport",
+            "tcp",
+            "-fflags",
+            "+genpts+discardcorrupt",
+            "-use_wallclock_as_timestamps",
+            "1",
+        ]
+    elif source_type == "usb":
+        input_args = ["-f", "dshow"] if platform.system().lower() == "windows" else ["-f", "v4l2"]
+
+    stream_args = ["-map", "0:v:0", "-map", "0:a?", "-dn", "-sn"]
+    codec_args = ["-c", "copy"]
+    if source_type == "usb":
+        stream_args = ["-map", "0:v:0", "-dn", "-sn"]
+        codec_args = ["-c:v", "libx264", "-preset", "ultrafast", "-an"]
+
+    return [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        *input_args,
+        "-i",
+        stream,
+        "-t",
+        str(duration_seconds),
+        *stream_args,
+        *codec_args,
+        "-avoid_negative_ts",
+        "make_zero",
+        "-y",
+        str(output),
+    ]
+
+
+def _safe_filename_part(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in "._-" else "_" for char in value.strip())
+    cleaned = cleaned.strip("._-")
+    return cleaned[:40] or "camera"
 
 
 def _content_type_for(path: Path) -> str:
@@ -1267,6 +1422,13 @@ def _web_page() -> str:
       min-height: 20px;
       color: var(--muted);
     }
+    .warning-message {
+      color: #b45309;
+      font-weight: 650;
+    }
+    :root[data-theme="dark"] .warning-message {
+      color: #fbbf24;
+    }
     pre {
       max-height: 220px;
       overflow: auto;
@@ -1455,6 +1617,7 @@ def _web_page() -> str:
         <div class="panel"><div class="label">Temperature</div><div id="temperature" class="value">-</div></div>
         <div class="panel"><div class="label">Uptime</div><div id="uptime" class="value">-</div></div>
       </section>
+      <div id="storageWarning" class="message warning-message"></div>
     </section>
     <section id="camerasTab" class="tab-panel" hidden>
         <h2>Cameras</h2>
@@ -1462,6 +1625,7 @@ def _web_page() -> str:
           <div class="panel"><div class="label">Detected Platform</div><div id="profile" class="value">-</div></div>
           <div class="panel"><div class="label">Recommended Cameras</div><div id="recommendedSources" class="value">-</div></div>
         </div>
+        <div id="cameraLimitWarning" class="message warning-message"></div>
         <p class="message">Camera changes apply to this local Ghost DVR dashboard.</p>
         <section class="panel">
           <h3>Camera Discovery</h3>
@@ -1531,7 +1695,28 @@ def _web_page() -> str:
           <button id="saveRecordingConfigButton" type="button">Save Limits</button>
         </div>
         <p class="message">Infinite keeps recording until stopped or until free disk space reaches the GB floor.</p>
+        <div id="recordingStorageWarning" class="message warning-message"></div>
         <div id="recordingConfigMessage" class="message"></div>
+      </section>
+      <section class="panel">
+        <h3>Test Recording</h3>
+        <p class="message">Create a short test clip to verify the selected camera, save folder, and video stream before field use.</p>
+        <div class="settings-row">
+          <label>
+            <span class="label">Camera</span>
+            <select id="testRecordingSource"></select>
+          </label>
+          <label>
+            <span class="label">Duration</span>
+            <select id="testRecordingDuration">
+              <option value="10">10 seconds</option>
+              <option value="15">15 seconds</option>
+              <option value="20">20 seconds</option>
+            </select>
+          </label>
+          <button id="testRecordingButton" type="button">Test Recording</button>
+        </div>
+        <div id="testRecordingMessage" class="message"></div>
       </section>
       <p class="message">Download or delete completed recordings from the Pi remotely.</p>
       <div id="recordingsMessage" class="message"></div>
@@ -1813,6 +1998,7 @@ def _web_page() -> str:
       document.getElementById('storage').textContent = storage.free_gb === undefined
         ? 'Unknown'
         : `${storage.free_gb} GB free of ${storage.total_gb} GB (${storage.free_percent}%)`;
+      renderStorageWarnings(storage, recordingConfig);
       document.getElementById('load').textContent = formatLoad(system);
       document.getElementById('memory').textContent = formatMemory(system.memory);
       document.getElementById('temperature').textContent = system.temperature_c === null || system.temperature_c === undefined
@@ -1824,10 +2010,12 @@ def _web_page() -> str:
       renderApiAutostart(apiAutostart);
       document.getElementById('profile').textContent = sourceConfig.hardware_profile?.name || '-';
       document.getElementById('recommendedSources').textContent = sourceConfig.recommended_sources || '-';
+      renderCameraLimitWarning(sourceConfig.sources || [], sourceConfig.recommended_sources, sourceConfig.hardware_profile);
       if (!sourceConfigLoaded) {
         sourceConfigs = sourceConfig.sources || [];
         renderSourceConfig(sourceConfigs);
         renderPreviewSlots(sourceConfigs);
+        renderTestRecordingSources(sourceConfigs);
         sourceConfigLoaded = true;
       }
       if (!recordingConfigLoaded) {
@@ -1878,6 +2066,7 @@ def _web_page() -> str:
           const currentIndex = Number(row.dataset.index);
           sourceConfigs.splice(currentIndex, 1);
           renderSourceConfig(sourceConfigs);
+          renderTestRecordingSources(sourceConfigs);
           setConfigMessage('Camera removed from the edit list. Save Cameras to apply.');
         });
         actionGroup.appendChild(test);
@@ -1930,6 +2119,8 @@ def _web_page() -> str:
       sourceConfigs = response.sources || [];
       renderSourceConfig(sourceConfigs);
       renderPreviewSlots(sourceConfigs);
+      renderTestRecordingSources(sourceConfigs);
+      renderCameraLimitWarning(sourceConfigs, response.recommended_sources, response.hardware_profile);
       sourceConfigLoaded = true;
       setConfigMessage(sourceConfigs.length
         ? 'Camera settings saved. Recording must be stopped before changes are allowed.'
@@ -2010,6 +2201,7 @@ def _web_page() -> str:
         has_password: false
       });
       renderSourceConfig(sourceConfigs);
+      renderTestRecordingSources(sourceConfigs);
       setConfigMessage('Discovered camera added to the edit list. Add username/password if needed, then Save Cameras.');
     }
 
@@ -2046,6 +2238,55 @@ def _web_page() -> str:
       }
     }
 
+    function renderTestRecordingSources(sources) {
+      const select = document.getElementById('testRecordingSource');
+      select.replaceChildren();
+      if (!sources.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No cameras configured';
+        select.appendChild(option);
+        return;
+      }
+      for (const source of sources) {
+        const option = document.createElement('option');
+        option.value = source.source_id || '';
+        option.textContent = source.name || source.source_id || 'Camera';
+        select.appendChild(option);
+      }
+    }
+
+    function renderCameraLimitWarning(sources, recommended, profile) {
+      const count = (sources || []).length;
+      const limit = Number(recommended || 0);
+      const name = profile?.name || 'this hardware';
+      const message = limit > 0 && count > limit
+        ? `${name} is recommended for ${limit} camera(s). ${count} are configured, so recording or preview may be unstable.`
+        : '';
+      document.getElementById('cameraLimitWarning').textContent = message;
+    }
+
+    function renderStorageWarnings(storage, recordingConfig) {
+      const warning = storageWarningMessage(storage, recordingConfig);
+      document.getElementById('storageWarning').textContent = warning;
+      document.getElementById('recordingStorageWarning').textContent = warning;
+    }
+
+    function storageWarningMessage(storage, recordingConfig) {
+      if (!storage || storage.free_gb === undefined) return '';
+      const floor = Number(recordingConfig?.stop_when_free_gb_below ?? 0);
+      if (floor > 0 && Number(storage.free_gb) <= floor) {
+        return `Storage is at or below the configured ${floor} GB floor. Long or infinite recordings will stop.`;
+      }
+      if (floor > 0 && Number(storage.free_gb) <= floor + 2) {
+        return `Storage is close to the configured ${floor} GB floor.`;
+      }
+      if (storage.warning) {
+        return `Storage is low: ${storage.free_percent}% free.`;
+      }
+      return '';
+    }
+
     async function testSource(row) {
       setConfigMessage('Testing camera...');
       const source = sourceFromRow(row);
@@ -2057,6 +2298,38 @@ def _web_page() -> str:
         body: JSON.stringify(source)
       });
       setConfigMessage(result.ok ? 'Camera test passed.' : `Camera test failed: ${result.error || 'Unknown error'}`);
+    }
+
+    async function testRecording() {
+      if (isRecording) {
+        setTestRecordingMessage('Stop recording before running a test recording.');
+        return;
+      }
+      const sourceId = document.getElementById('testRecordingSource').value;
+      if (!sourceId) {
+        setTestRecordingMessage('Add and save a camera before running a test recording.');
+        return;
+      }
+      setTestRecordingMessage('Running test recording...');
+      const result = await requestJson('/record/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          source_id: sourceId,
+          duration_seconds: Number(document.getElementById('testRecordingDuration').value)
+        })
+      });
+      setTestRecordingMessage(
+        `Test recording passed: ${result.file} (${formatBytes(result.size_bytes)}, ${result.codec_name || 'video'}${result.width && result.height ? `, ${result.width}x${result.height}` : ''}).`
+      );
+      const recordings = await requestJson('/recordings');
+      renderRecordings(recordings.recordings || []);
+    }
+
+    function setTestRecordingMessage(message) {
+      document.getElementById('testRecordingMessage').textContent = message;
     }
 
     function sourceFromRow(row) {
@@ -2473,6 +2746,7 @@ def _web_page() -> str:
         has_password: false
       });
       renderSourceConfig(sourceConfigs);
+      renderTestRecordingSources(sourceConfigs);
     });
 
     document.getElementById('discoverCamerasButton').addEventListener('click', async () => {
@@ -2504,6 +2778,14 @@ def _web_page() -> str:
         await saveRecordingConfig();
       } catch (error) {
         setRecordingConfigMessage(`Save failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('testRecordingButton').addEventListener('click', async () => {
+      try {
+        await testRecording();
+      } catch (error) {
+        setTestRecordingMessage(`Test recording failed: ${error.message}`);
       }
     });
 
