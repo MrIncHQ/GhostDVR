@@ -18,6 +18,7 @@ def build_status(
     timestamp: str | None = None,
     hardware_profile: dict[str, Any] | None = None,
     recording_duration_seconds: int = 0,
+    recording_health: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     source_statuses = sources or []
     storage_status = storage or {}
@@ -31,6 +32,7 @@ def build_status(
         "storage": storage_status,
         "storage_free_gb": storage_status.get("free_gb", storage_free_gb),
         "hardware_profile": hardware_profile or {},
+        "recording_health": recording_health or [],
         "timestamp": timestamp
         or datetime.now().astimezone().isoformat(timespec="seconds"),
     }
@@ -47,6 +49,7 @@ def write_status(
     timestamp: str | None = None,
     hardware_profile: dict[str, Any] | None = None,
     recording_duration_seconds: int = 0,
+    recording_health: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     status = build_status(
         identity,
@@ -57,6 +60,7 @@ def write_status(
         timestamp=timestamp,
         hardware_profile=hardware_profile,
         recording_duration_seconds=recording_duration_seconds,
+        recording_health=recording_health,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:

@@ -74,6 +74,7 @@ class DvrEngine:
         self.metadata_store = metadata_store or RecordingMetadataStore()
         self.active_metadata_paths: dict[str, Path] = {}
         self.active_source_ids: list[str] = []
+        self._recording_health_sizes: dict[str, int] = {}
         self.recording_requested = False
         time_config = config.get("time", {})
         self.clock = clock or LocalClock(str(time_config.get("timezone", "local")))
@@ -164,6 +165,7 @@ class DvrEngine:
             timestamp=self.clock.timestamp(),
             hardware_profile=self.hardware_profile.to_dict(),
             recording_duration_seconds=self.recording_duration_seconds(),
+            recording_health=self.recording_health(),
         )
 
     def start_recording(self, source_id: str | None = None) -> dict[str, Any]:
@@ -262,6 +264,7 @@ class DvrEngine:
         self.recorder.stop()
         if was_recording:
             self.active_source_ids = []
+            self._recording_health_sizes.clear()
             self.logger.info(log_message)
 
     def _apply_recording_limits(self, storage_status) -> None:
@@ -297,6 +300,53 @@ class DvrEngine:
             return 0
         return max(0, int((self.clock.now() - session.started_at).total_seconds()))
 
+    def recording_health(self) -> list[dict[str, Any]]:
+        if not self.recorder.is_recording():
+            self._recording_health_sizes.clear()
+            return []
+
+        sessions = self._active_sessions()
+        health: list[dict[str, Any]] = []
+        for source_id, session in sessions.items():
+            latest_file = _latest_recording_file(session.output_pattern)
+            current_size = latest_file.stat().st_size if latest_file and latest_file.exists() else 0
+            previous_size = self._recording_health_sizes.get(source_id)
+            growing = previous_size is not None and current_size > previous_size
+            self._recording_health_sizes[source_id] = current_size
+            if latest_file is None:
+                state = "waiting_for_file"
+                message = "Waiting for first segment"
+            elif previous_size is None:
+                state = "checking"
+                message = "Checking file growth"
+            elif growing:
+                state = "writing"
+                message = "Writing video data"
+            elif current_size > 0:
+                state = "stalled"
+                message = "File is not growing"
+            else:
+                state = "empty"
+                message = "Recording file is empty"
+            health.append(
+                {
+                    "source_id": source_id,
+                    "file": latest_file.name if latest_file else None,
+                    "size_bytes": current_size,
+                    "growing": growing,
+                    "state": state,
+                    "message": message,
+                }
+            )
+        return health
+
+    def _active_sessions(self) -> dict[str, RecordingSession]:
+        sessions_by_id = getattr(self.recorder, "sessions", None)
+        if isinstance(sessions_by_id, dict) and sessions_by_id:
+            return dict(sessions_by_id)
+        session = self.recorder.session
+        return {session.source_id: session} if session else {}
+
     def _led_state_for(
         self,
         *,
@@ -311,3 +361,21 @@ class DvrEngine:
         if any(source.get("online", False) for source in source_statuses):
             return LedState.ONLINE
         return LedState.OFFLINE
+
+
+def _latest_recording_file(output_pattern: Path) -> Path | None:
+    parent = output_pattern.parent
+    name = output_pattern.name
+    if "%03d" not in name:
+        return output_pattern if output_pattern.exists() else None
+    prefix, suffix = name.split("%03d", 1)
+    if not parent.exists():
+        return None
+    candidates = [
+        path
+        for path in parent.iterdir()
+        if path.is_file() and path.name.startswith(prefix) and path.name.endswith(suffix)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)

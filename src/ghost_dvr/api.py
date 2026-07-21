@@ -1612,6 +1612,7 @@ def _web_page() -> str:
         <div class="panel"><div class="label">Device ID</div><div id="device" class="value">-</div></div>
         <div class="panel"><div class="label">Source</div><div id="source" class="value">-</div></div>
         <div class="panel"><div class="label">Recording</div><div id="recording" class="value">-</div></div>
+        <div class="panel"><div class="label">Recording Health</div><div id="recordingHealth" class="value">-</div></div>
         <div class="panel"><div class="label">Storage</div><div id="storage" class="value">-</div></div>
         <div class="panel"><div class="label">CPU Load</div><div id="load" class="value">-</div></div>
         <div class="panel"><div class="label">Memory</div><div id="memory" class="value">-</div></div>
@@ -1803,6 +1804,7 @@ def _web_page() -> str:
     let refreshTimer = null;
     let previewTimer = null;
     let currentAuthStatus = null;
+    let firstEmptyCameraRedirectDone = false;
 
     async function requestJson(path, options) {
       const response = await fetch(path, options);
@@ -1998,6 +2000,7 @@ def _web_page() -> str:
       document.getElementById('device').textContent = status.device_id || '-';
       document.getElementById('source').textContent = sourceText;
       document.getElementById('recording').textContent = isRecording ? 'Recording' : 'Idle';
+      document.getElementById('recordingHealth').textContent = recordingHealthText(status.recording_health || []);
       document.getElementById('recordButton').textContent = isRecording ? 'Stop Recording' : 'Start Recording';
       document.getElementById('storage').textContent = storage.free_gb === undefined
         ? 'Unknown'
@@ -2015,6 +2018,7 @@ def _web_page() -> str:
       document.getElementById('profile').textContent = sourceConfig.hardware_profile?.name || '-';
       document.getElementById('recommendedSources').textContent = sourceConfig.recommended_sources || '-';
       renderCameraLimitWarning(sourceConfig.sources || [], sourceConfig.recommended_sources, sourceConfig.hardware_profile);
+      redirectToCamerasIfEmpty(sourceConfig.sources || []);
       if (!sourceConfigLoaded) {
         sourceConfigs = sourceConfig.sources || [];
         renderSourceConfig(sourceConfigs);
@@ -2032,6 +2036,23 @@ def _web_page() -> str:
       }
       renderRecordings(recordings.recordings || []);
       document.getElementById('events').textContent = (events.events || []).join('\\n');
+    }
+
+    function recordingHealthText(health) {
+      if (!isRecording) return 'Idle';
+      if (!health.length) return 'Starting';
+      const stalled = health.filter(item => ['stalled', 'empty'].includes(item.state));
+      if (stalled.length) return `${stalled.length} issue(s)`;
+      const writing = health.filter(item => item.state === 'writing');
+      if (writing.length === health.length) return `${writing.length} writing`;
+      return health.map(item => item.message || item.state || 'Checking').join(', ');
+    }
+
+    function redirectToCamerasIfEmpty(sources) {
+      if (firstEmptyCameraRedirectDone || sources.length) return;
+      firstEmptyCameraRedirectDone = true;
+      activateTab('cameras');
+      setConfigMessage('No cameras configured. Use Discover Cameras or + Add Camera to add the first one.');
     }
 
     function renderSourceConfig(sources) {
@@ -2334,6 +2355,17 @@ def _web_page() -> str:
 
     function setTestRecordingMessage(message) {
       document.getElementById('testRecordingMessage').textContent = message;
+    }
+
+    function activateTab(tab) {
+      document.querySelectorAll('.tab-button').forEach(item => {
+        item.classList.toggle('active', item.dataset.tab === tab);
+      });
+      document.getElementById('dashboardTab').hidden = tab !== 'dashboard';
+      document.getElementById('camerasTab').hidden = tab !== 'cameras';
+      document.getElementById('recordingsTab').hidden = tab !== 'recordings';
+      document.getElementById('settingsTab').hidden = tab !== 'settings';
+      document.getElementById('statusTab').hidden = tab !== 'status';
     }
 
     function sourceFromRow(row) {
@@ -2795,15 +2827,7 @@ def _web_page() -> str:
 
     document.querySelectorAll('.tab-button').forEach(button => {
       button.addEventListener('click', () => {
-        const tab = button.dataset.tab;
-        document.querySelectorAll('.tab-button').forEach(item => {
-          item.classList.toggle('active', item === button);
-        });
-        document.getElementById('dashboardTab').hidden = tab !== 'dashboard';
-        document.getElementById('camerasTab').hidden = tab !== 'cameras';
-        document.getElementById('recordingsTab').hidden = tab !== 'recordings';
-        document.getElementById('settingsTab').hidden = tab !== 'settings';
-        document.getElementById('statusTab').hidden = tab !== 'status';
+        activateTab(button.dataset.tab);
       });
     });
 

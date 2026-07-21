@@ -281,6 +281,44 @@ class EngineTests(unittest.TestCase):
 
             self.assertEqual(status["recording_duration_seconds"], 65)
 
+    def test_snapshot_reports_recording_file_growth_health(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FakeRecorder(Path(temp_dir))
+            engine = DvrEngine(
+                identity=DeviceIdentity(
+                    uuid="00000000-0000-0000-0000-000000000000",
+                    device_id="TEST",
+                    hostname="ghostdvr-test",
+                ),
+                config={"sources": [], "recording": {"segment_minutes": 15}},
+                status_file=Path(temp_dir) / "status.json",
+                logger=logging.getLogger("test.engine.recording-health"),
+                sources=[
+                    MockVideoSource(
+                        SourceConfig(
+                            source_id="source-1",
+                            name="Mock Video",
+                            source_type="mock",
+                            address="test_video.mp4",
+                        )
+                    )
+                ],
+                recorder=recorder,
+                storage_monitor=FakeStorageMonitor(),
+                status_led=FakeStatusLed(),
+                recording_source_validator=FakeSourceValidator(),
+            )
+
+            engine.start_recording()
+            first_segment = Path(temp_dir) / "test_1_000.mp4"
+            first_segment.write_bytes(b"video")
+            growing = engine.snapshot()
+            stalled = engine.snapshot()
+
+            self.assertEqual(growing["recording_health"][0]["state"], "writing")
+            self.assertEqual(growing["recording_health"][0]["file"], "test_1_000.mp4")
+            self.assertEqual(stalled["recording_health"][0]["state"], "stalled")
+
     def test_snapshot_auto_stops_when_duration_limit_is_reached(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             recorder = FakeRecorder(Path(temp_dir))

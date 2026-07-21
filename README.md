@@ -146,6 +146,9 @@ load, edit camera settings, discover cameras, switch light/dark mode, and delete
 completed recordings. The dashboard is intended for a trusted local network
 only. Do not port-forward it or expose it directly to the internet.
 
+If no cameras are configured, the dashboard opens the Cameras tab so the first
+camera can be added immediately.
+
 On first web dashboard launch, Ghost DVR asks whether to create a local dashboard
 password or skip login protection. If you skip login, anyone on the same local
 network who can reach the device IP can open the dashboard. Existing installs
@@ -196,6 +199,9 @@ The Settings tab includes a **Test Recording** button. Use it to create a
 short test clip before field use. It verifies that the selected camera can be
 recorded, that the active save folder is writable, and that the resulting file
 contains a readable video stream.
+
+While recording, the Dashboard tab shows a lightweight recording health status
+based on whether the active recording files are growing.
 
 The dashboard shows storage warnings when free space is low or close to the
 configured free-space floor. On low-power hardware, the Cameras tab also warns
