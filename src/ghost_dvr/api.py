@@ -1603,6 +1603,7 @@ def _web_page() -> str:
       <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
       <button class="tab-button" type="button" data-tab="cameras">Cameras</button>
       <button class="tab-button" type="button" data-tab="recordings">Recordings</button>
+      <button class="tab-button" type="button" data-tab="settings">Settings</button>
       <button class="tab-button" type="button" data-tab="status">Status</button>
     </nav>
     <section id="dashboardTab" class="tab-panel">
@@ -1658,6 +1659,28 @@ def _web_page() -> str:
     </section>
     <section id="recordingsTab" class="tab-panel" hidden>
       <h2>Recordings</h2>
+      <p class="message">Download or delete completed recordings from the Pi remotely.</p>
+      <div id="recordingsMessage" class="message"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Recording</th>
+            <th>Source</th>
+            <th>Duration</th>
+            <th>Size</th>
+            <th>Status</th>
+            <th>Download MKV</th>
+            <th>Download MP4</th>
+            <th>Delete</th>
+          </tr>
+        </thead>
+        <tbody id="recordings">
+          <tr><td colspan="8">No recordings loaded</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section id="settingsTab" class="tab-panel" hidden>
+      <h2>Settings</h2>
       <section class="panel">
         <h3>Storage</h3>
         <div class="settings-row">
@@ -1718,25 +1741,6 @@ def _web_page() -> str:
         </div>
         <div id="testRecordingMessage" class="message"></div>
       </section>
-      <p class="message">Download or delete completed recordings from the Pi remotely.</p>
-      <div id="recordingsMessage" class="message"></div>
-      <table>
-        <thead>
-          <tr>
-            <th>Recording</th>
-            <th>Source</th>
-            <th>Duration</th>
-            <th>Size</th>
-            <th>Status</th>
-            <th>Download MKV</th>
-            <th>Download MP4</th>
-            <th>Delete</th>
-          </tr>
-        </thead>
-        <tbody id="recordings">
-          <tr><td colspan="8">No recordings loaded</td></tr>
-        </tbody>
-      </table>
     </section>
     <section id="statusTab" class="tab-panel" hidden>
       <h2>Status</h2>
@@ -2798,6 +2802,7 @@ def _web_page() -> str:
         document.getElementById('dashboardTab').hidden = tab !== 'dashboard';
         document.getElementById('camerasTab').hidden = tab !== 'cameras';
         document.getElementById('recordingsTab').hidden = tab !== 'recordings';
+        document.getElementById('settingsTab').hidden = tab !== 'settings';
         document.getElementById('statusTab').hidden = tab !== 'status';
       });
     });

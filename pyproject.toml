@@ -1,6 +1,6 @@
 [project]
 name = "ghost-dvr"
-version = "0.3.2"
+version = "0.3.3"
 description = "Offline-first portable DVR platform."
 requires-python = ">=3.11"
 readme = "README.md"

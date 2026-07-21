@@ -45,6 +45,8 @@ class ApiTests(unittest.TestCase):
                 page = _request_text("GET", port, "/")
                 self.assertIn("Ghost DVR", page)
                 self.assertIn("[hidden] {\n      display: none !important;", page)
+                self.assertIn('data-tab="settings">Settings</button>', page)
+                self.assertIn('id="settingsTab"', page)
                 self.assertEqual(_request("GET", port, "/status")["device_id"], "TEST")
                 self.assertEqual(_request("GET", port, "/sources")[0]["name"], "source-1")
                 self.assertEqual(
@@ -591,7 +593,7 @@ class ApiTests(unittest.TestCase):
                     response = _request("GET", port, "/update/status?force=1")
 
                 self.assertTrue(response["update_available"])
-                self.assertEqual(response["version"], "0.3.2")
+                self.assertEqual(response["version"], "0.3.3")
                 self.assertIn("Update available", response["message"])
             finally:
                 server.shutdown()
@@ -1211,7 +1213,7 @@ def _api_config():
 
 def _update_status(update_available=False, message="Update available"):
     return UpdateStatus(
-        version="0.3.2",
+        version="0.3.3",
         commit="abc123",
         branch="main",
         git_available=True,

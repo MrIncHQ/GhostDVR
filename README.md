@@ -172,7 +172,7 @@ The Status tab also has a **Start web dashboard on device boot** toggle. Enable
 it if you want the API/web dashboard to come back automatically after the Pi or
 PC reboots.
 
-The Recordings tab lets you choose how long a recording session runs: 15, 25,
+The Settings tab lets you choose how long a recording session runs: 15, 25,
 30, 40, 60 minutes, or infinite. Infinite keeps recording until you stop it or
 until the free disk space reaches the configured GB floor. Recordings are still
 split into segment files while the session continues. The default segment length
@@ -188,11 +188,11 @@ Camera_1_2026-06-28_19-22-02_000.mkv
 Camera_2_2026-06-28_19-22-02_000.mkv
 ```
 
-The Recordings tab also shows the active recording folder and lets you set a
+The Settings tab also shows the active recording folder and lets you set a
 preferred save folder. Leave it blank to use the default `runtime/recordings`
 folder. Stop recording before changing the save folder.
 
-The Recordings tab includes a **Test Recording** button. Use it to create a
+The Settings tab includes a **Test Recording** button. Use it to create a
 short test clip before field use. It verifies that the selected camera can be
 recorded, that the active save folder is writable, and that the resulting file
 contains a readable video stream.
